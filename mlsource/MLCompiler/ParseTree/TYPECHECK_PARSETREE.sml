@@ -911,7 +911,7 @@ struct
                     tupleType
                 end
           
-          | Labelled {recList, frozen, expType, ...} =>
+          | Labelled {base, recList, frozen, expType, location, ...} =>
             let
                 (* Process each item in the list. *)              
                 fun labEntryToLabType {name, valOrPat, expType, ...} =
@@ -922,9 +922,53 @@ struct
                     {name = name, typeof = ty }
                 end
             
-              val expressionType =
-                mkLabelled 
-                  (sortLabels (map labEntryToLabType recList), frozen) (* should always be true *);
+                val typedLabels = map labEntryToLabType recList
+
+                (* Process the base and check the updated labels. *)
+                val expressionType =
+                    (case base of
+                        NONE => mkLabelled (sortLabels typedLabels, frozen) (* should always be true *)
+                    |   SOME {exp = baseExp, expType = baseExpType} =>
+                        let
+                            val baseType = assValues v baseExp
+                            val ty =
+                                (case baseType of
+                                    LabelledType {recList = baseRecList, fullList} =>
+                                    let
+                                        fun existsInBase x : bool = List.exists (fn {name, ...} => name = x) baseRecList
+                                        fun assertExistsInBase {name, ...} : unit =
+                                            if existsInBase name then
+                                                ()
+                                            else
+                                                reportError lex
+                                                {
+                                                    location = location,
+                                                    hard = true,
+                                                    message = PrettyString ("The field \"" ^ name ^ "\" must exist in the base record."),
+                                                    context = SOME (foundNear v ())
+                                                }
+                                        val () = List.app assertExistsInBase typedLabels
+
+                                        fun mapType (oldLabel as {name, typeof}) =
+                                            case List.find (fn {name = x, ...} => x = name) typedLabels of
+                                                NONE => oldLabel
+                                            |   SOME newLabel => newLabel
+                                    in
+                                        LabelledType {recList = List.map mapType baseRecList, fullList = fullList}
+                                    end
+                                |   _ =>
+                                    let
+                                    val () =
+                                        typeWrong ("The updated expression in a record update must have record type.",
+                                            valTypeMessage (lex, typeEnv) ("record update:", baseExp, baseType),
+                                            PrettyString "not a record type", lex, location, foundNear v)
+                                    in
+                                        badType
+                                    end)
+                        in
+                            baseExpType := baseType;
+                            ty
+                        end)
             in
                 expType := expressionType;
                 expressionType
