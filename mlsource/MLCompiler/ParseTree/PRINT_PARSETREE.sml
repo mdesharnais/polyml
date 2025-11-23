@@ -573,7 +573,7 @@ struct
                 ]
             )
 
-      | Labelled {recList, frozen, ...} =>
+      | Labelled {base, recList, frozen, ...} =>
         let
             fun displayRecList (c, depth): pretty list =
             if depth <= 0 then [PrettyString "..."]
@@ -610,6 +610,10 @@ struct
         in
             PrettyBlock (2, false, [],
                 PrettyString "{" ::
+                (case base of
+                    NONE => []
+                |   SOME {exp, ...} =>
+                    [displayParsetree (exp, depth - 1), PrettyString " where "]) @
                 displayRecList (recList, depth - 1) @
                 (if frozen then [PrettyString "}"]
                 else [PrettyString (if null recList then "...}" else ", ...}")])
