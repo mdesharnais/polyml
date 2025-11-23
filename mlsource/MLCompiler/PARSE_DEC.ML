@@ -1099,7 +1099,12 @@ struct
                     in
                         case sy lex of
                             RightCurly => (* Empty brackets denote unit *)
-                            let val () = insymbol lex val locs = locSpan(startLocn, posEnd) in (unit locs, locs) end
+                            let
+                                val () = insymbol lex
+                                val locs = locSpan(startLocn, posEnd)
+                            in
+                                (unit locs, locs)
+                            end
 
                         |   _ =>
                             let (* lab1 = exp1, __ , labn = expn *)
