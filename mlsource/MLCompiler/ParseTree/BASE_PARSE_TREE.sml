@@ -188,9 +188,13 @@ struct
     |   Orelse              of { first: parsetree, second: parsetree, location: location }
 
     |   Labelled            of
-        (* Labelled record & the entry in the list. "frozen" is false if it's
-           a pattern with "...". *)
-            { recList: labelRecEntry list, frozen: bool, expType: types ref, location: location }
+            (* Labelled record & the entry in the list. "frozen" is false if it's
+               a pattern with "...". The base is used for record update. *)
+            { base : labelRecBase option,
+              recList: labelRecEntry list,
+              frozen: bool,
+              expType: types ref,
+              location: location }
 
     |   Selector            of
             { name: string, labType: types, typeof: types, location: location }
@@ -293,6 +297,13 @@ struct
        value:  structVals option ref,
        location: location
     } 
+
+    (* The base of a label record. *)
+    and labelRecBase =
+    {
+        exp: parsetree,
+        expType: types ref
+    }
 
     (* An entry in a label record in an expression or a pattern. *)
     and labelRecEntry =

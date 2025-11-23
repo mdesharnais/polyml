@@ -384,23 +384,30 @@ struct
           fullLoc     = fullLoc
         };
 
-    fun mkLabelledTree (recList, frozen, location) : parsetree = 
-     Labelled
-       {
-         recList = recList,
-         frozen  = frozen,
-         expType  = ref EmptyType,
-         location = location
-       };
-       
-    fun mkLabelRecEntry (name, nameLoc, valOrPat, fullLocation) =
-    {
-        name = name,
-        nameLoc = nameLoc,
-        valOrPat = valOrPat,
-        fullLocation = fullLocation,
-        expType = ref EmptyType
-    }
+    fun mkLabelledTree (base, recList, frozen, location) : parsetree =
+        Labelled
+        {
+            base = base,
+            recList = recList,
+            frozen = frozen,
+            expType = ref EmptyType,
+            location = location
+        };
+
+    fun mkLabelRecBase (name, nameLoc) : labelRecBase =
+        {
+            exp = mkIdent (name, nameLoc),
+            expType = ref EmptyType
+        }
+
+    fun mkLabelRecEntry (name, nameLoc, valOrPat, fullLocation) : labelRecEntry =
+        {
+            name = name,
+            nameLoc = nameLoc,
+            valOrPat = valOrPat,
+            fullLocation = fullLocation,
+            expType = ref EmptyType
+        }
 
     fun mkSelector(name, location) : parsetree =
     let
@@ -504,6 +511,7 @@ struct
         and  typebind   = typebind
         and  datatypebind=datatypebind
         and  exbind     = exbind
+        and  labelRecBase = labelRecBase
         and  labelRecEntry=labelRecEntry
         and  ptProperties = ptProperties
         and  matchtree   = matchtree

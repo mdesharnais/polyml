@@ -926,7 +926,7 @@ struct
                                 val locs = locSpan(startLocn, location lex)
                                 val () = getsym (SYMBOLS.RightCurly, lex);
                             in
-                                (mkLabelledTree (result, frozen, locs), locs)
+                                (PARSETREE.mkLabelledTree (NONE, result, frozen, locs), locs)
                             end
                     end
 
@@ -1133,7 +1133,7 @@ struct
                                 end
                                 val (labs, _) = getList (SYMBOLS.Comma, empty, lex, getEntry)
                                 val locs = locSpan(startLocn, location lex) (* Include brackets. *)
-                                val labelled = mkLabelledTree (labs, true (* always frozen *), locs)
+                                val labelled = PARSETREE.mkLabelledTree (NONE, labs, true (* always frozen *), locs)
                                 val () = getsym (SYMBOLS.RightCurly, lex);
                             in
                                 (labelled, locs)

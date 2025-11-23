@@ -67,6 +67,7 @@ sig
   and typebind
   and datatypebind
   and exbind
+  and labelRecBase
   and labelRecEntry
   and matchtree;
    
@@ -128,7 +129,8 @@ sig
   val mkDatatypeBinding : string * typeVarForm list * valueConstr list * location * location -> datatypebind
   val mkValueConstr : string * typeParsetree option * location -> valueConstr
   val mkExBinding : string * parsetree * typeParsetree option * location * location -> exbind;
-  val mkLabelledTree : labelRecEntry list * bool * location -> parsetree;
+  val mkLabelledTree : labelRecBase option * labelRecEntry list * bool * location -> parsetree;
+  val mkLabelRecBase : string * location -> labelRecBase
   val mkLabelRecEntry: string * location * parsetree * location -> labelRecEntry
   val mkSelector : string * location -> parsetree;
   val mkRaise : parsetree * location -> parsetree;
@@ -187,6 +189,7 @@ sig
         and  typebind   = typebind
         and  datatypebind=datatypebind
         and  exbind     = exbind
+        and  labelRecBase = labelRecBase
         and  labelRecEntry=labelRecEntry
         and  ptProperties = ptProperties
         and  matchtree   = matchtree
