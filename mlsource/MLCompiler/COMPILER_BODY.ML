@@ -170,7 +170,12 @@ struct
                 let
                     val fixes : PARSEDEC.fixes = {enterFix  = enterFix, lookupFix = lookupFix}
                     val params : PARSEDEC.params =
-                        {recordPunning = DEBUG.getParameter DEBUG.languageExtensionsTag debugSwitches}
+                        let
+                            val langExtensions = DEBUG.getParameter DEBUG.languageExtensionsTag debugSwitches
+                        in
+                            { recordPunning = langExtensions,
+                              recordUpdate = langExtensions }
+                        end
                 in
                     PARSEDEC.parseDec (stopSyms, lex, fixes, params)
                 end
