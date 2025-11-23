@@ -1095,11 +1095,11 @@ struct
                 |   LeftCurly =>
                     let
                         val () = insymbol lex;
-                        val posEnd = location lex
                     in
-                        case sy lex of
+                        (case sy lex of
                             RightCurly => (* Empty brackets denote unit *)
                             let
+                                val posEnd = location lex (* Includes right curly bracket. *)
                                 val () = insymbol lex
                                 val locs = locSpan(startLocn, posEnd)
                             in
@@ -1142,7 +1142,7 @@ struct
                                 val () = getsym (SYMBOLS.RightCurly, lex);
                             in
                                 (labelled, locs)
-                            end
+                            end)
                     end
 
                 (* local declaration *)
