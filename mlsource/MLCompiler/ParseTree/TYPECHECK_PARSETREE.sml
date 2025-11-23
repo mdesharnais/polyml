@@ -149,6 +149,16 @@ struct
     val emptyType            = EmptyType
     val badType              = BadType
 
+    fun mkIdent (name, loc) : parsetree =
+        Ident
+        {
+            name   = name,
+            expType = ref EmptyType,
+            value  = ref undefinedValue,
+            location = loc,
+            possible = ref(fn () => [])
+        }
+
    (* Second pass of ML parse tree. *)
    
     (* This is pass 2 of the compiler. It walks over the parse tree
@@ -1919,16 +1929,6 @@ struct
                                     location = location
                                 }
 
-                            fun mkIdent (name, loc) : parsetree = 
-                              Ident
-                                {
-                                  name   = name,
-                                  expType = ref EmptyType,
-                                  value  = ref undefinedValue,
-                                  location = loc,
-                                  possible = ref(fn () => [])
-                                }
- 
                             val fvalAsTree = mkFunDeclaration([fvalBind], explicit, implicit, location)
                         in
                             typeMismatch("Type of function does not match type of recursive application.",
