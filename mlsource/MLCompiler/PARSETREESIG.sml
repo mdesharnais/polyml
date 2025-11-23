@@ -60,8 +60,15 @@ sig
      occurence, i.e. the type of the identifier must be int * int -> bool,
      say, after all the unification has been done. *)
           
-  type parsetree and valbind and fvalbind and fvalclause and typebind
-  and datatypebind and exbind and labelRecEntry and matchtree; 
+  type parsetree
+  and valbind
+  and fvalbind
+  and fvalclause
+  and typebind
+  and datatypebind
+  and exbind
+  and labelRecEntry
+  and matchtree;
    
   val isIdent : parsetree -> bool;
 
