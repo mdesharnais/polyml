@@ -940,8 +940,7 @@ struct
                                             if existsInBase name then
                                                 ()
                                             else
-                                                reportError lex
-                                                {
+                                                reportError lex {
                                                     location = location,
                                                     hard = true,
                                                     message = PrettyString ("The field \"" ^ name ^ "\" must exist in the base record."),
@@ -958,10 +957,10 @@ struct
                                     end
                                 |   _ =>
                                     let
-                                    val () =
-                                        typeWrong ("The updated expression in a record update must have record type.",
-                                            valTypeMessage (lex, typeEnv) ("record update:", baseExp, baseType),
-                                            PrettyString "not a record type", lex, location, foundNear v)
+                                        val () =
+                                            typeWrong ("The updated expression in a record update must have record type.",
+                                                valTypeMessage (lex, typeEnv) ("record update:", baseExp, baseType),
+                                                PrettyString "not a record type", lex, location, foundNear v)
                                     in
                                         badType
                                     end)
