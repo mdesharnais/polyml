@@ -618,9 +618,13 @@ struct
                 "length selDecs = " ^ Int.toString (length selDecs)) *)
 
             val allDecs =
-                List.foldr (fn (dec, decs) => #dec dec @ decs) [] baseDec @
-                List.foldr (fn (dec, decs) => #dec dec @ decs) [] selDecs @
-                List.foldr (fn ((_, dec), decs) => #dec dec @ decs) [] updateDecs
+                let
+                    (* Generate the list of declarations in reverse order.
+                       This way, we only traverse each list only once. *)
+                    val decs = List.foldr (fn ((_, dec), decs) => #dec dec @ decs) [] updateDecs
+                    val decs = List.foldr (fn (dec, decs) => #dec dec @ decs) decs selDecs
+                    val decs = List.foldr (fn (dec, decs) => #dec dec @ decs) decs baseDec
+                in decs end
 
             (* val () = LEX.warningMessage (lex, LEX.nullLocation,
                 "length tupleElems = " ^ Int.toString (length tupleElems)) *)
