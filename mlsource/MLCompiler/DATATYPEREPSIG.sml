@@ -1,5 +1,5 @@
 (*
-    Copyright (c) 2009 David C. J. Matthews 2009.
+    Copyright (c) David C. J. Matthews 2009, 2025, 2026.
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -23,19 +23,21 @@ sig
     type values
     type typeConstrSet
     type typeId
-    type typeVarForm
-    type typeVarMap
     type level
+    type typeConstrs
 
-    val chooseConstrRepr :
-        (string*types) list * types list -> { constrs: codetree list, boxed: codetree, size: codetree }
+    (* Generate code for the constructors after choosing the optimum representation. *)
+    (* Process a single datatype constructor: used for built-in datatypes. *)
+    val chooseConstrRepr: (string * types option) list -> codetree list
+    (* Process one or more datatypes.  Used for datatype declarations. *)
+    val createValueConstructorCode: typeConstrSet list -> codetree list list
 
     type representations
     val RefForm:   representations;
     val EnumForm:  { tag: word, maxTag: word } -> representations;
 
-    val createNullaryConstructor: representations * types list * string -> codetree
-    val createUnaryConstructor: representations * types list * string -> codetree
+    val createNullaryConstructor: representations * string -> codetree
+    val createUnaryConstructor: representations * string -> codetree
 
     (* Standard values *)
     val listConstr: typeConstrSet
@@ -49,7 +51,7 @@ sig
     and contextConstr: typeConstrSet
     and prettyConstr: typeConstrSet
 
-    val mkExIden:       types * level * typeVarMap -> codetree
+    val mkExIden:       types * level -> codetree
 
     (* Types that can be shared. *)
     structure Sharing:
@@ -59,8 +61,7 @@ sig
         type values         = values
         type typeConstrSet  = typeConstrSet
         type typeId         = typeId
-        type typeVarForm    = typeVarForm
-        type typeVarMap     = typeVarMap
         type level          = level
+        type typeConstrs    = typeConstrs
     end
 end;

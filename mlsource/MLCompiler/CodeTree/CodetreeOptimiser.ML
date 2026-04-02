@@ -1,6 +1,6 @@
 (*
 
-    Copyright (c) 2012,13,15,17,19-22 David C.J. Matthews
+    Copyright (c) 2012,13,15,17,19-22, 2026 David C.J. Matthews
 
     This library is free software; you can redistribute it and/or
     modify it under the terms of the GNU Lesser General Public
@@ -25,9 +25,8 @@ functor CodetreeOptimiser(
     sig
         type codetree
         type loadForm
-        type codeUse
-        val cleanProc : (codetree * codeUse list * (int -> loadForm) * int) -> codetree
-        structure Sharing: sig type codetree = codetree and loadForm = loadForm and codeUse = codeUse end
+        val cleanProc : (codetree * (int -> loadForm) * int) -> codetree
+        structure Sharing: sig type codetree = codetree and loadForm = loadForm end
     end
 
     structure Simplifier:
@@ -118,13 +117,13 @@ struct
     (* When transforming code we only process one level and do not descend into sub-functions. *)
     local
         fun deExtract(Extract l) = l | deExtract _ = raise Misc.InternalError "deExtract"
-        fun onlyFunction repEntry (Lambda{ body, isInline, name, closure, argTypes, resultType, localCount, recUse }) =
+        fun onlyFunction repEntry (Lambda{ body, isInline, name, closure, argTypes, resultType, localCount, recUse, functionId }) =
             SOME(
                 Lambda {
                     body = body, isInline = isInline, name = name,
                     closure = map (deExtract o mapCodetree repEntry o Extract) closure,
                     argTypes = argTypes, resultType = resultType, localCount = localCount,
-                    recUse = recUse
+                    recUse = recUse, functionId=functionId
                 }
             )
         |   onlyFunction repEntry code = repEntry code
@@ -224,7 +223,8 @@ struct
                     name = name ^ "()",
                     closure = List.tabulate(closureSize, fn n => LoadClosure n) @ stableArgs,
                     argTypes = List.map (fn (_, t, u) => (t, u)) changeArgsAndTypes,
-                    resultType = resultType, localCount = localCount, recUse = [UseGeneral]
+                    resultType = resultType, localCount = localCount, recUse = [UseGeneral],
+                    functionId=ref ()
                 }
         in
             Eval {
@@ -420,7 +420,7 @@ struct
        apply and it would be possible to merge them all.  For the moment keep them
        separate.  If another of the cases applies this will be re-entered on a
        subsequent pass. *)
-    fun detupleResult({ argTypes, name, resultType, closure, isInline, localCount, body, ...}: lambdaForm , filter, makeAddress) =
+    fun detupleResult({ argTypes, name, resultType, closure, isInline, localCount, body, functionId, ...}: lambdaForm , filter, makeAddress) =
         (* The function returns a tuple or at least the uses of the function take apart a tuple.
            Transform it to take a container as an argument and put the result in there. *)
         let
@@ -456,7 +456,7 @@ struct
                         argTypes=argTypes @ [(ContainerType containerSize, [])],
                         closure=closure @ [LoadLocal shimAddress],
                         localCount=localCount + 1, isInline=isInline,
-                        recUse = [UseGeneral]
+                        recUse = [UseGeneral], functionId=functionId
                     }
             in
                 val mainFunction = (mainAddress, mainLambda)
@@ -478,13 +478,14 @@ struct
                     )
             val shimLambda =
                 { body = shimBody, name = name, argTypes = argTypes, closure = [LoadLocal mainAddress],
-                  resultType = resultType, isInline = InlineAlways, localCount = 1, recUse = [UseGeneral] }
+                  resultType = resultType, isInline = InlineAlways, localCount = 1, recUse = [UseGeneral],
+                  functionId=ref () }
             val shimFunction = (shimAddress, shimLambda)
          in
             (shimLambda, [mainFunction, shimFunction])
         end
 
-    fun transformFunctionArgs({ argTypes, name, resultType, closure, isInline, localCount, body, ...} , usage, makeAddress) =
+    fun transformFunctionArgs({ argTypes, name, resultType, closure, isInline, localCount, body, functionId, ...} , usage, makeAddress) =
         (* Not curried - just a single argument. *)
         let
             (* We need to construct an inline "shim" function that
@@ -616,7 +617,7 @@ struct
                             Lambda { closure = fnclosure,
                                 isInline = InlineAlways, name = name ^ "-P", resultType = GeneralType,
                                 argTypes = List.tabulate(nArgs, fn _ => (GeneralType, [UseGeneral])),
-                                localCount = if needContainer then 1 else 0, recUse = [],
+                                localCount = if needContainer then 1 else 0, recUse = [], functionId=ref (),
                                 body = curryPack(tl,
                                             (* The closure for the next level is the current closure
                                                together with all the arguments at this level. *)
@@ -669,7 +670,7 @@ struct
                 in
                     val thisArg =
                         Lambda {
-                            closure = loadThisArg, isInline = InlineAlways, name = name ^ "-E",
+                            closure = loadThisArg, isInline = InlineAlways, name = name ^ "-E", functionId=ref (),
                             argTypes =
                                 List.tabulate(totalArgCount,
                                     fn i => if i = totalArgCount-1 then (lastArgType, [UseGeneral]) else (GeneralType, [UseGeneral])),
@@ -713,7 +714,7 @@ struct
                 {
                     body = mkEnv(extraBindings, transBody), name = name, argTypes = transArgTypes,
                     closure = closure @ [LoadLocal shimAddress], resultType = resultType, isInline = isInline,
-                    localCount = ! localCounter, recUse = [UseGeneral]
+                    localCount = ! localCounter, recUse = [UseGeneral], functionId=functionId
                 }
 
             (* Return the pair of functions. *)
@@ -722,7 +723,8 @@ struct
                 Eval { function = Extract(LoadClosure 0), argList = transArgs, resultType = resultType }
             val shimLambda =
                 { body = shimBody, name = name, argTypes = argTypes, closure = [LoadLocal mainAddress],
-                  resultType = resultType, isInline = InlineAlways, localCount = 0, recUse = [UseGeneral] }
+                  resultType = resultType, isInline = InlineAlways, localCount = 0, recUse = [UseGeneral],
+                  functionId = ref() }
             val shimFunction = (shimAddress, shimLambda)
             (* TODO:  We have two copies of the shim function here. *)
         in
@@ -730,7 +732,7 @@ struct
         end
 
     fun decurryFunction(
-            { argTypes, name, resultType, closure, isInline, localCount,
+            { argTypes, name, resultType, closure, isInline, localCount, functionId,
               body as Lambda { argTypes=subArgTypes, resultType=subResultType, ... } , ...}, makeAddress) =
         (* Curried - just unwind one level this time.  This case is normally dealt with by
            the front-end at least for fun bindings. *)
@@ -765,7 +767,7 @@ struct
                         },
                     name = name, resultType = subResultType,
                     closure = closure @ [LoadLocal shimAddress], isInline = isInline, localCount = localCount,
-                    argTypes = argTypes @ subArgTypes, recUse = [UseGeneral]
+                    argTypes = argTypes @ subArgTypes, recUse = [UseGeneral], functionId=functionId
                 }
             val mainFunction = (mainAddress, mainLambda)
 
@@ -781,12 +783,12 @@ struct
                                           mapArgs LoadArgument subArgTypes
                             },
                     name = name ^ "-", resultType = subResultType, localCount = 0, isInline = InlineAlways,
-                    argTypes = subArgTypes, recUse = [UseGeneral]
+                    argTypes = subArgTypes, recUse = [UseGeneral], functionId = ref()
                 }
 
             val shimOuterLambda =
                 { body = shimInnerLambda, name = name, argTypes = argTypes, closure = [LoadLocal mainAddress],
-                  resultType = resultType, isInline = InlineAlways, localCount = 0, recUse = [UseGeneral] }
+                  resultType = resultType, isInline = InlineAlways, localCount = 0, recUse = [UseGeneral], functionId = ref() }
             val shimFunction = (shimAddress, shimOuterLambda)
         in
             (shimOuterLambda: lambdaForm, [mainFunction, shimFunction])
@@ -806,7 +808,7 @@ struct
     fun optimise (context, use) (Lambda lambda) =
             SOME(mapLambdaResult(optLambda(context, use, lambda, LCNormal)))
 
-    |   optimise (context, use) (Newenv(envDecs, envExp)) =
+    |   optimise (context as { reprocess, makeAddr, ... }, use) (Newenv(envDecs, envExp)) =
         let
             fun mapExp mapUse = mapCodetree (optimise(context, mapUse))
 
@@ -825,7 +827,104 @@ struct
                 end
             |   mapbinding(NullBinding exp) = NullBinding(mapExp [UseGeneral] exp)
             |   mapbinding(Container{addr, use, size, setter}) =
-                    Container{addr=addr, use=use, size=size, setter = mapExp [UseGeneral] setter}
+                let
+                    fun returnsContainer (Newenv(_, exp)) = returnsContainer exp
+                      | returnsContainer (Cond(_, t, e)) = returnsContainer t andalso returnsContainer e
+                      | returnsContainer (Handle {exp, handler, ...}) = returnsContainer exp andalso returnsContainer handler
+                      | returnsContainer (Raise _) =  true
+                      | returnsContainer (BeginLoop {loop, ...}) = returnsContainer loop
+                      | returnsContainer (Loop _) = true
+                      | returnsContainer (SetContainer _) = true
+                      | returnsContainer _ = false
+
+                    val redundant_fields   =
+                        if List.all(fn UseField _ => true | _ => false) use
+                        then
+                        let val newFilter = BoolVector.tabulate(size,
+                                  (fn i => List.exists (fn UseField(n,_) => n = i
+                                                         | _ => false) use))
+                        in
+                           if BoolVector.all (fn i => i) newFilter then NONE
+                           else SOME newFilter
+                        end
+                        else NONE
+                in
+                   case redundant_fields of
+                        NONE => Container{addr=addr, use=use, size=size, setter = mapExp [UseGeneral] setter}
+                   |    SOME newFilter =>
+                        if returnsContainer setter then
+                        let
+                            fun updateContainer leafFn (Newenv(envDecs, exp)) =
+                                      Newenv(envDecs, updateContainer leafFn exp)
+                              | updateContainer leafFn (Cond(i, t, e)) =
+                                      Cond(i,updateContainer leafFn t,updateContainer leafFn e)
+                              | updateContainer leafFn (Handle {exp, handler, exPacketAddr}) =
+                                      Handle{exp= updateContainer leafFn exp, handler = updateContainer leafFn handler, exPacketAddr=exPacketAddr}
+                              | updateContainer leafFn (BeginLoop {loop, arguments}) =
+                                      BeginLoop {loop = updateContainer leafFn loop,arguments = arguments}
+                              | updateContainer leafFn (SetContainer {tuple,filter,...}) = leafFn (tuple,filter)
+                              | updateContainer _ exp = exp
+                            val newSize = BoolVector.foldl (fn (true, n) => n+1 | (false, n) => n) 0 newFilter
+                        in
+                            if newSize = 1
+                            then
+                            let
+                                fun nthTrueIndex (n, vec) =
+                                let
+                                   val len = BoolVector.length vec
+                                   fun loop (i, count) =
+                                     if i = len
+                                     then raise InternalError "nthTrueIndex"
+                                     else if BoolVector.sub(vec, i)
+                                     then
+                                         if count = n then i
+                                         else loop (i+1, count+1)
+                                     else
+                                         loop (i+1, count)
+                                in
+                                   (loop (0, 0))
+                                end
+                                (* Find the offset *)
+                                val (offset,_) = valOf (BoolVector.findi (fn (_, b) => b) newFilter)
+                                val field = updateContainer (fn (tuple,filter) => mkInd(nthTrueIndex(offset,filter), tuple)) setter
+                                fun mkFields n = if n = offset then field else CodeZero
+                                val fields = List.tabulate(BoolVector.length newFilter, mkFields)
+                                val container = SetContainer{container= Extract(LoadLocal addr),
+                                                             tuple= Tuple{fields =fields ,isVariant=false},
+                                                             filter=BoolVector.tabulate(size,fn _ => true)}
+                            in
+                                reprocess := true;
+                                Container{addr=addr, use=use, size=size, setter = container}
+                            end
+                            else
+                            let
+                                fun maskOut (vec, filt) =
+                                let
+                                    val filter_index = ref 0
+                                    fun f n = if BoolVector.sub(vec,n)
+                                              then (BoolVector.sub(filt,!filter_index)
+                                                    before filter_index := !filter_index + 1)
+                                              else false
+                                in
+                                    BoolVector.tabulate(BoolVector.length vec,f)
+                                end
+                                val newAddr = makeAddr()
+                                val newContainer = Extract(LoadLocal newAddr)
+                                val newSetter = updateContainer (fn (tuple,filter) => mkSetContainer(newContainer, tuple, maskOut(filter,newFilter))) setter
+                                val makeContainer = Container{addr=newAddr, use=[], size=newSize, setter = newSetter}
+                                val fields = List.rev (#2 (BoolVector.foldl
+                                        (fn (true,(a,l)) => (a+1,(mkIndContainer(a,newContainer))::l)
+                                          | (false,(a,l)) => (a,CodeZero::l)) (0,[]) newFilter))
+                                val container = SetContainer{container= Extract(LoadLocal addr),
+                                                             tuple= Tuple{fields =fields ,isVariant=false},
+                                                             filter=BoolVector.tabulate(size,fn _ => true)}
+                            in
+                                reprocess := true;
+                                Container{addr=addr, use=use, size=size, setter=mkEnv([makeContainer], container)}
+                            end
+                        end
+                        else Container{addr=addr, use=use, size=size, setter = mapExp [UseGeneral] setter}
+                end
         in
             SOME(Newenv(map mapbinding envDecs, mapExp use envExp))
         end
@@ -1006,7 +1105,7 @@ struct
     and optLambda(
             { maxInlineSize, reprocess, makeAddr, ... },
             contextUse,
-            { body, name, argTypes, resultType, closure, localCount, isInline, recUse, ...},
+            { body, name, argTypes, resultType, closure, localCount, isInline, recUse, functionId, ...},
             lambdaContext) : (int * lambdaForm) list * codetree =
     (*
         Optimisations on lambdas.
@@ -1079,7 +1178,8 @@ struct
                         body = optBody,
                         isInline = isInline, name = name, closure = closure,
                         argTypes = argTypes, resultType = resultType, recUse = recUse,
-                        localCount = !addressAllocator (* After optimising body. *)
+                        localCount = !addressAllocator, (* After optimising body. *)
+                        functionId = functionId
                     }
             in
                 ([], Lambda lambdaRes) 
@@ -1134,7 +1234,7 @@ struct
                 {
                     body = updatedBody, name = name, argTypes = argTypes, closure = closure,
                     resultType = resultType, isInline = inlineType, localCount = localCount,
-                    recUse = recUse
+                    recUse = recUse, functionId = functionId
                 }
 
                 (* See if it should be transformed.  We only do this if the function is not going
@@ -1355,9 +1455,10 @@ struct
             val needed = ! needReprocess
             val _ = needReprocess := false;
             val transLambdas =
-                map (fn {lambda={body, isInline, name, closure, argTypes, resultType, localCount, recUse}, use, addr} =>
+                map (fn {lambda={body, isInline, name, closure, argTypes, resultType, localCount, recUse, functionId}, use, addr} =>
                         {lambda={body=mapChecks body, isInline=isInline, name=name, closure=closure,
-                                  argTypes=argTypes, resultType=resultType, localCount=localCount, recUse=recUse},
+                                  argTypes=argTypes, resultType=resultType, localCount=localCount, recUse=recUse,
+                                  functionId=functionId},
                          use=use, addr=addr}) lambdaList
             val theseTransformed = ! needReprocess
             val _ = if needed then needReprocess := true else ()
@@ -1471,8 +1572,7 @@ struct
                 val simpCode = Simplifier.specialToGeneral simpCode
                 val () = if printCodeTree then compilerOut(Pretty.PrettyString "Output of simplifier") else ()
                 val () = if printCodeTree then compilerOut (BaseCodeTree.pretty simpCode) else ()
-                val preOptCode =
-                    RemoveRedundant.cleanProc(simpCode, [UseExport], topLevel, simpCount)
+                val preOptCode = RemoveRedundant.cleanProc(simpCode, topLevel, simpCount)
                 (* Print the code with the use information before it goes into the optimiser. *)
                 val () = if printCodeTree then compilerOut(Pretty.PrettyString "Output of cleaner") else ()
                 val () = if printCodeTree then compilerOut (BaseCodeTree.pretty preOptCode) else ()
