@@ -25,17 +25,16 @@ functor CodetreeOptimiser(
     sig
         type codetree
         type loadForm
-        type codeUse
-        val cleanProc : (codetree * codeUse list * (int -> loadForm) * int) -> codetree
-        structure Sharing: sig type codetree = codetree and loadForm = loadForm and codeUse = codeUse end
+        val cleanProc : (codetree * (int -> loadForm) * int) -> codetree
+        structure Sharing: sig type codetree = codetree and loadForm = loadForm end
     end
 
     structure Simplifier:
     sig
-        type codetree and codeBinding and envSpecial
+        type codetree and codeBinding and envSpecial and pretty
 
         val simplifier:
-            { code: codetree, numLocals: int, maxInlineSize: int } ->
+            { code: codetree, numLocals: int, maxInlineSize: int, codeTreePrinter: pretty -> unit } ->
                 (codetree * codeBinding list * envSpecial) * int * bool
         val specialToGeneral:
             codetree * codeBinding list * envSpecial -> codetree
@@ -45,6 +44,7 @@ functor CodetreeOptimiser(
             type codetree = codetree
             and codeBinding = codeBinding
             and envSpecial = envSpecial
+            and pretty = pretty
         end
     end
 
@@ -81,6 +81,7 @@ struct
     open Address
     open CodetreeFunctions
     open StretchArray
+    open Pretty
     
     infix 9 sub
     
@@ -806,7 +807,7 @@ struct
     fun optimise (context, use) (Lambda lambda) =
             SOME(mapLambdaResult(optLambda(context, use, lambda, LCNormal)))
 
-    |   optimise (context, use) (Newenv(envDecs, envExp)) =
+    |   optimise (context as { reprocess, makeAddr, codeTreePrinter, ... }, use) (Newenv(envDecs, envExp)) =
         let
             fun mapExp mapUse = mapCodetree (optimise(context, mapUse))
 
@@ -825,7 +826,106 @@ struct
                 end
             |   mapbinding(NullBinding exp) = NullBinding(mapExp [UseGeneral] exp)
             |   mapbinding(Container{addr, use, size, setter}) =
-                    Container{addr=addr, use=use, size=size, setter = mapExp [UseGeneral] setter}
+                let
+                    fun returnsContainer (Newenv(_, exp)) = returnsContainer exp
+                      | returnsContainer (Cond(_, t, e)) = returnsContainer t andalso returnsContainer e
+                      | returnsContainer (Handle {exp, handler, ...}) = returnsContainer exp andalso returnsContainer handler
+                      | returnsContainer (Raise _) =  true
+                      | returnsContainer (BeginLoop {loop, ...}) = returnsContainer loop
+                      | returnsContainer (Loop _) = true
+                      | returnsContainer (SetContainer _) = true
+                      | returnsContainer _ = false
+
+                    val redundant_fields   =
+                        if List.all(fn UseField _ => true | _ => false) use
+                        then
+                        let val newFilter = BoolVector.tabulate(size,
+                                  (fn i => List.exists (fn UseField(n,_) => n = i
+                                                         | _ => false) use))
+                        in
+                           if BoolVector.all (fn i => i) newFilter then NONE
+                           else SOME newFilter
+                        end
+                        else NONE
+                in
+                   case redundant_fields of
+                        NONE => Container{addr=addr, use=use, size=size, setter = mapExp [UseGeneral] setter}
+                   |    SOME newFilter =>
+                        if returnsContainer setter then
+                        let
+                            fun updateContainer leafFn (Newenv(envDecs, exp)) =
+                                      Newenv(envDecs, updateContainer leafFn exp)
+                              | updateContainer leafFn (Cond(i, t, e)) =
+                                      Cond(i,updateContainer leafFn t,updateContainer leafFn e)
+                              | updateContainer leafFn (Handle {exp, handler, exPacketAddr}) =
+                                      Handle{exp= updateContainer leafFn exp, handler = updateContainer leafFn handler, exPacketAddr=exPacketAddr}
+                              | updateContainer leafFn (BeginLoop {loop, arguments}) =
+                                      BeginLoop {loop = updateContainer leafFn loop,arguments = arguments}
+                              | updateContainer leafFn (SetContainer {tuple,filter,...}) = leafFn (tuple,filter)
+                              | updateContainer _ exp = exp
+                            val newSize = BoolVector.foldl (fn (true, n) => n+1 | (false, n) => n) 0 newFilter
+                        in
+                            if newSize = 1
+                            then
+                            let
+                                fun nthTrueIndex (n, vec) =
+                                let
+                                   val len = BoolVector.length vec
+                                   fun loop (i, count) =
+                                     if i = len
+                                     then raise InternalError "nthTrueIndex"
+                                     else if BoolVector.sub(vec, i)
+                                     then
+                                         if count = n then i
+                                         else loop (i+1, count+1)
+                                     else
+                                         loop (i+1, count)
+                                in
+                                   (loop (0, 0))
+                                end
+                                (* Find the offset *)
+                                val (offset,_) = valOf (BoolVector.findi (fn (_, b) => b) newFilter)
+                                val field = updateContainer (fn (tuple,filter) => mkInd(nthTrueIndex(offset,filter), tuple)) setter
+                                fun mkFields n = if n = offset then field else CodeZero
+                                val fields = List.tabulate(BoolVector.length newFilter, mkFields)
+                                val container = SetContainer{container= Extract(LoadLocal addr),
+                                                             tuple= Tuple{fields =fields ,isVariant=false},
+                                                             filter=BoolVector.tabulate(size,fn _ => true)}
+                            in
+                                reprocess := true;
+                                codeTreePrinter(PrettyString "Optimiser: Container; newSize = 1");
+                                Container{addr=addr, use=use, size=size, setter = container}
+                            end
+                            else
+                            let
+                                fun maskOut (vec, filt) =
+                                let
+                                    val filter_index = ref 0
+                                    fun f n = if BoolVector.sub(vec,n)
+                                              then (BoolVector.sub(filt,!filter_index)
+                                                    before filter_index := !filter_index + 1)
+                                              else false
+                                in
+                                    BoolVector.tabulate(BoolVector.length vec,f)
+                                end
+                                val newAddr = makeAddr()
+                                val newContainer = Extract(LoadLocal newAddr)
+                                val newSetter = updateContainer (fn (tuple,filter) => mkSetContainer(newContainer, tuple, maskOut(filter,newFilter))) setter
+                                val makeContainer = Container{addr=newAddr, use=[], size=newSize, setter = newSetter}
+                                val fields = List.rev (#2 (BoolVector.foldl
+                                        (fn (true,(a,l)) => (a+1,(mkIndContainer(a,newContainer))::l)
+                                          | (false,(a,l)) => (a,CodeZero::l)) (0,[]) newFilter))
+                                val container = SetContainer{container= Extract(LoadLocal addr),
+                                                             tuple= Tuple{fields =fields ,isVariant=false},
+                                                             filter=BoolVector.tabulate(size,fn _ => true)}
+                            in
+                                reprocess := true;
+                                codeTreePrinter(PrettyString "Optimiser: Container; newSize <>= 1");
+                                Container{addr=addr, use=use, size=size, setter=mkEnv([makeContainer], container)}
+                            end
+                        end
+                        else Container{addr=addr, use=use, size=size, setter = mapExp [UseGeneral] setter}
+                end
         in
             SOME(Newenv(map mapbinding envDecs, mapExp use envExp))
         end
@@ -842,7 +942,7 @@ struct
             SOME(mapLambdaResult(bindings, call))
         end
 
-    |   optimise (context as { reprocess, ...}, use) (Eval {function = Cond(i, t, e), argList, resultType}) =
+    |   optimise (context as { reprocess, codeTreePrinter, ...}, use) (Eval {function = Cond(i, t, e), argList, resultType}) =
         let
             (* Transform "(if i then t else e) x" into "if i then t x else e x".  This
                allows for other optimisations and inline expansion. *)
@@ -852,6 +952,7 @@ struct
                  mapCodetree (optimise(context, use)) (Eval{function=l, argList=argList, resultType=resultType})
         in
             reprocess := true;
+            codeTreePrinter(PrettyString "Optimiser: Eval(if...) => if ... Eval else Eval");
             SOME(Cond(i, pushFunction t, pushFunction e))
         end
 
@@ -873,21 +974,25 @@ struct
         SOME(Indirect{base = mapCodetree (optimise(context, [UseField(offset, use)])) base,
                       offset = offset, indKind = IndTuple})
 
-    |   optimise (context, use) (code as Cond _) =
+    |   optimise (context, use) (code as Cond(i, t, e)) =
         (* If the result of the if-then-else is always taken apart as fields
            then we are better off taking it apart further down and putting
            the fields into a container on the stack. *)
         if List.all(fn UseField _ => true | _ => false) use
         then SOME(optFields(code, context, use))
-        else NONE
+        (* However, if we're not optimising it we must make sure the context for each arm is [UseGeneral]
+           and not the usage for the conditional as a whole.  For example, if we're applying
+           the result of the conditional as a function we nevertheless mustn't optimise either
+           arm as though it was immediately applied to an argument. *)
+        else SOME(Cond(optGeneral context i, optGeneral context t, optGeneral context e))
 
-    |   optimise (context, use) (code as Handle _) =
+    |   optimise (context, use) (code as Handle{exp, handler, exPacketAddr}) =
         (* Similarly for handlers: if the result is taken apart use a container. *)
         if List.all(fn UseField _ => true | _ => false) use
         then SOME(optFields(code, context, use))
-        else NONE
+        else SOME(Handle{exp=optGeneral context exp, handler=optGeneral context handler, exPacketAddr=exPacketAddr})
 
-    |   optimise (context as { makeAddr, reprocess, ...}, use) (code as BeginLoop{loop, arguments}) =
+    |   optimise (context as { makeAddr, reprocess, codeTreePrinter, ...}, use) (code as BeginLoop{loop, arguments}) =
         let
             (* If an argument is a tuple and always taken apart within the loop we should
                replace it with arguments for the fields.  This is the same as detupling
@@ -986,6 +1091,7 @@ struct
                         mkEnv([Declar{addr=addrForTuple, value=tupleForBody, use=[UseGeneral]}], mapCodetree replaceLoop loop)
 
                     val () = reprocess := true
+                    val () = codeTreePrinter(PrettyString "Optimiser: replace loop")
                     val () = if List.length newArgs <> finalArgLength then raise InternalError "Bad length 2" else ()
                 in
                     SOME(mkEnv(decs, BeginLoop{loop=newLoop, arguments=newArgs}))
@@ -1004,7 +1110,7 @@ struct
     and optGeneral context exp = mapCodetree (optimise(context, [UseGeneral])) exp
 
     and optLambda(
-            { maxInlineSize, reprocess, makeAddr, ... },
+            { maxInlineSize, reprocess, makeAddr, codeTreePrinter, ... },
             contextUse,
             { body, name, argTypes, resultType, closure, localCount, isInline, recUse, ...},
             lambdaContext) : (int * lambdaForm) list * codetree =
@@ -1071,7 +1177,8 @@ struct
                 {
                     makeAddr = fn () => (! addressAllocator) before addressAllocator := ! addressAllocator + 1,
                     reprocess = reprocess,
-                    maxInlineSize = maxInlineSize
+                    maxInlineSize = maxInlineSize,
+                    codeTreePrinter = codeTreePrinter
                 }
                 val optBody = mapCodetree (optimise(optContext, [UseGeneral])) body
                 val lambdaRes =
@@ -1092,7 +1199,8 @@ struct
                 {
                     makeAddr = fn () => (! addressAllocator) before addressAllocator := ! addressAllocator + 1,
                     reprocess = reprocess,
-                    maxInlineSize = maxInlineSize
+                    maxInlineSize = maxInlineSize,
+                    codeTreePrinter = codeTreePrinter
                 }
                 val optBody = mapCodetree (optimise(optContext, [UseGeneral])) body
 
@@ -1200,10 +1308,18 @@ struct
                     in
                         case (fullArgPattern, resultPattern) of
                             (_ :: _ :: _, _) => (* Curried *)
-                                ( reprocess := true; decurryFunction(lambda, makeAddr))
+                            (
+                                reprocess := true;
+                                codeTreePrinter(PrettyString "Optimiser: decurry function");
+                                decurryFunction(lambda, makeAddr)
+                            )
 
                         |   (_, ArgPattTuple {filter, ...}) => (* Result is a tuple *)
-                                ( reprocess := true; detupleResult(lambda, filter, makeAddr))
+                            (
+                                reprocess := true;
+                                codeTreePrinter(PrettyString("Optimiser: detuple function result: " ^ name));
+                                detupleResult(lambda, filter, makeAddr)
+                            )
 
                         |   (first :: _, _) =>
                             let
@@ -1223,7 +1339,12 @@ struct
                             in
                                 (* It isn't curried - look at the arguments. *)
                                 if List.exists checkArg first
-                                then ( reprocess := true; transformFunctionArgs(lambda, first, makeAddr) )
+                                then
+                                (
+                                    reprocess := true;
+                                    codeTreePrinter(PrettyString("Optimiser: transform function args: " ^ name));
+                                    transformFunctionArgs(lambda, first, makeAddr)
+                                )
                                 else (lambda, [])
                             end
 
@@ -1237,13 +1358,17 @@ struct
                    repeated processing. *)
                 if #isInline newLambda <> DontInline andalso isInline = DontInline andalso
                     (case use of [UseExport] => false | _ => true)
-                then reprocess := true
+                then
+                (
+                    reprocess := true;
+                    codeTreePrinter(PrettyString("Optimiser: function: " ^ name  ^ " is now inline"))
+                )
                 else ();
                 (bindings, Lambda newLambda)
             end
     end
 
-    and optFields (code, context as { reprocess, makeAddr, ...}, use) =
+    and optFields (code, context as { reprocess, makeAddr, codeTreePrinter, ...}, use) =
     let
         (* We have an if-then-else or a loop whose result is only ever
            taken apart.  We push this down. *)
@@ -1281,6 +1406,7 @@ struct
         |   pushContainer(tuple, leafFn) = leafFn tuple (* Anything else. *)
 
         val () = reprocess := true
+        val () = codeTreePrinter(PrettyString "Optimiser: pushed container")
     in
         case useList of
             [offset] => (* We only want a single field.  Push down an Indirect. *)
@@ -1338,7 +1464,7 @@ struct
        extra parameters.  The advantage compared with using a static-link or a closure on
        the stack is that they can be fully tail-recursive.  With a static-link or stack
        closure the free variables have to remain on the stack until the function returns. *)
-    fun lambdaLiftAndConstantFunction(code, debugSwitches, numLocals) =
+    fun lambdaLiftAndConstantFunction(code, debugSwitches, numLocals, codeTreePrinter) =
     let
         val needReprocess = ref false
         (* At the moment this just code-generates immediately any lambdas without
@@ -1443,6 +1569,7 @@ struct
 
         and mapChecks c = mapCodetree runChecks c
 
+        val () = if !needReprocess then codeTreePrinter(PrettyString "Lambdalift/constant") else ()
     in
         (mapCodetree runChecks code, numLocals, !needReprocess)
     end
@@ -1453,29 +1580,32 @@ struct
         fun topLevel _ = raise InternalError "top level reached in optimiser"
 
         val maxInlineSize = Debug.getParameter Debug.maxInlineSizeTag debugSwitches
+        local
+            val printCodeTree = Debug.getParameter Debug.codetreeTag debugSwitches
+        in
+            val codeTreePrinter = if printCodeTree then Pretty.getCompilerOutput debugSwitches else fn _ => ()
+        end
 
-        fun processTree (code, nLocals, optAgain) =
+        fun processTree (code, nLocals, optAgain, loopCount) =
         let
             (* First run the simplifier.  Among other things this does inline
                expansion and if it does any we at least need to run cleanProc
                on the code so it will have set simpAgain. *)
             val (simpCode, simpCount, simpAgain) =
-                Simplifier.simplifier{code=code, numLocals=nLocals, maxInlineSize=FixedInt.toInt maxInlineSize}
+                Simplifier.simplifier{code=code, numLocals=nLocals, maxInlineSize=FixedInt.toInt maxInlineSize,
+                                      codeTreePrinter = codeTreePrinter}
         in
             if optAgain orelse simpAgain
             then
             let
                 (* Identify usage information and remove redundant code. *)
-                val printCodeTree      = Debug.getParameter Debug.codetreeTag debugSwitches
-                and compilerOut        = Pretty.getCompilerOutput debugSwitches
                 val simpCode = Simplifier.specialToGeneral simpCode
-                val () = if printCodeTree then compilerOut(Pretty.PrettyString "Output of simplifier") else ()
-                val () = if printCodeTree then compilerOut (BaseCodeTree.pretty simpCode) else ()
-                val preOptCode =
-                    RemoveRedundant.cleanProc(simpCode, [UseExport], topLevel, simpCount)
+                val () = codeTreePrinter(Pretty.PrettyString "Output of simplifier")
+                val () = codeTreePrinter(BaseCodeTree.pretty simpCode)
+                val preOptCode = RemoveRedundant.cleanProc(simpCode, topLevel, simpCount)
                 (* Print the code with the use information before it goes into the optimiser. *)
-                val () = if printCodeTree then compilerOut(Pretty.PrettyString "Output of cleaner") else ()
-                val () = if printCodeTree then compilerOut (BaseCodeTree.pretty preOptCode) else ()
+                val () = codeTreePrinter(Pretty.PrettyString "Output of cleaner")
+                val () = codeTreePrinter(BaseCodeTree.pretty preOptCode)
 
                 val reprocess = ref false (* May be set in the optimiser *)
                 (* Allocate any new addresses after the existing ones. *)
@@ -1486,7 +1616,8 @@ struct
                 {
                     makeAddr = makeAddr,
                     reprocess = reprocess,
-                    maxInlineSize = maxInlineSize
+                    maxInlineSize = maxInlineSize,
+                    codeTreePrinter = codeTreePrinter
                 }
                 (* Optimise the code, rewriting it as necessary. *)
                 val optCode = mapCodetree (optimise(optContext, [UseExport])) preOptCode
@@ -1497,19 +1628,19 @@ struct
                     if ! reprocess (* Re-optimise *) orelse simpAgain (* The simplifier wants to run again on this. *)
                     then (optCode, ! addressAllocator, ! reprocess)
                     else (* We didn't detect any inlineable functions.  Check for lambda-lifting. *)
-                        lambdaLiftAndConstantFunction(optCode, debugSwitches, ! addressAllocator)
+                        lambdaLiftAndConstantFunction(optCode, debugSwitches, ! addressAllocator, codeTreePrinter)
 
                 (* Print the code after the optimiser. *)
-                val () = if printCodeTree then compilerOut(Pretty.PrettyString "Output of optimiser") else ()
-                val () = if printCodeTree then compilerOut (BaseCodeTree.pretty llCode) else ()
+                val () = codeTreePrinter(Pretty.PrettyString "Output of optimiser")
+                val () = codeTreePrinter(BaseCodeTree.pretty llCode)
             in
                 (* Rerun the simplifier at least. *)
-                processTree(llCode, llCount, llAgain)
+                processTree(llCode, llCount, llAgain, loopCount+1)
             end
             else (simpCode, simpCount) (* We're done *)
         end
 
-        val (postOptCode, postOptCount) = processTree(code, numLocals, true (* Once at least *))
+        val (postOptCode, postOptCount) = processTree(code, numLocals, true (* Once at least *), 0)
         val (rGeneral, rDecs, rSpec) = postOptCode
     in
         { numLocals = postOptCount, general = rGeneral, bindings = rDecs, special = rSpec }

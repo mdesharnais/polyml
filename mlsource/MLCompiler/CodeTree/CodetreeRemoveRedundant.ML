@@ -24,9 +24,8 @@ functor CodetreeRemoveRedundant(
     sig
         type codetree
         type loadForm
-        type codeUse
-        val cleanProc : (codetree * codeUse list * (int -> loadForm) * int) -> codetree
-        structure Sharing: sig type codetree = codetree and loadForm = loadForm and codeUse = codeUse end
+        val cleanProc : (codetree * (int -> loadForm) * int) -> codetree
+        structure Sharing: sig type codetree = codetree and loadForm = loadForm end
     end
 =
 struct
@@ -93,9 +92,17 @@ struct
 
             val resultOfApps =
                 List.foldl
-                    (fn (UseApply (l, _), r) => l @ r | (UseExport, r) => UseExport :: r | (_, r) => UseGeneral :: r) []
+                    (fn (UseApply(l, _), r) => l @ r | (UseExport, r) => UseExport :: r | (_, r) => UseGeneral :: r) []
             
-            val bodyUse = resultOfApps lambdaUse
+            fun filter(true, true, []) = [UseExport, UseGeneral]
+            |   filter(false, true, []) = [UseGeneral]
+            |   filter(true, false, []) = [UseExport]
+            |   filter(false, false, []) = []
+            |   filter(_, isGen, UseExport :: l) = filter(true, isGen, l)
+            |   filter(isExp, _, UseGeneral :: l) = filter(isExp, true, l)
+            |   filter(isExp, isGen, a (* UseApply, UseField *) :: l) = a :: filter(isExp, isGen, l)
+            
+            val bodyUse = filter(false, false, resultOfApps lambdaUse)
 
             val bodyCode = cleanProc(body, bodyUse, lookup, addRef, localCount, checkArg)
             val recursiveApps = !recursiveRefRef
@@ -279,12 +286,17 @@ struct
                 (* Reference to a binding. *)
             |   doClean codeUse (Extract ext) = SOME(Extract(cleanExtract(ext, codeUse)))
 
-                (* Select a field from a tuple.  We can't do this for selection from datatypes because
+                (* Select a field from a tuple or container.  We can't do this for selection from datatypes because
                    some fields may not be present on all paths. *)
-            |   doClean codeUse (Indirect{base, offset, indKind = IndTuple}) =
+            |   doClean codeUse (Indirect{base, offset, indKind}) =
+                let
                     (* Try to pass down the use.  If the "base" is an Extract or another Indirect
                        we may be able to record this information.  If it is something else we can't. *)
-                    SOME(Indirect{base=cleanCode(base, [UseField(offset, codeUse)]), offset=offset, indKind = IndTuple})
+                in
+                    case indKind of
+                         IndVariant => NONE
+                    |    _ => SOME(Indirect{base=cleanCode(base, [UseField(offset, codeUse)]), offset=offset, indKind = indKind})
+                end
 
             |   doClean codeUse (Tuple{ fields, isVariant = false}) =
                 let
@@ -335,18 +347,14 @@ struct
                     (* Remove unused arguments.  They're unnecessary and may cause problems
                        later on. *)
                     fun filterUnused [] = ([], [])
-                    |   filterUnused (({use=[], value, ...}, _) :: args) =
-                        let
-                            val (used, discards) = filterUnused args
-                            (* We only need to keep this if it might have a side-effect. *)
-                        in
-                           (used, NullBinding(cleanCode(value, [UseGeneral])) :: discards)
-                        end
-                    |   filterUnused(({value, addr, use}, t) :: args) =
+                    |   filterUnused(({value, addr, ...}, t) :: args) =
                         let
                             val (used, discards) = filterUnused args
                         in
-                            (({value=cleanCode(value, use), addr=addr, use=use}, t) :: used, discards)
+                            case Array.sub(locals, addr) of
+                                [] => (* We only need to keep this if it might have a side-effect. *)
+                                    (used, NullBinding(cleanCode(value, [UseGeneral])) :: discards)
+                            |   use => (({value=cleanCode(value, use), addr=addr, use=use}, t) :: used, discards)
                         end
                     val (usedArgs, discards) = filterUnused arguments
                 in
@@ -354,19 +362,15 @@ struct
                     then
                     let
                         fun splitArgs([], []) = ([], [])
-                        |   splitArgs((arg, _) :: args, ({use=[], ...}, _) :: arguments) =
+                        |   splitArgs((arg as (argVal, _)) :: args, ({addr, ...}, _) :: arguments) =
                             let
                                 val (useArgs, discards) = splitArgs(args, arguments)
                             in
                                 (* We actually only need to keep this argument if it might have
                                    a side-effect but keep it anyway. *)
-                                (useArgs, NullBinding arg :: discards)
-                            end
-                        |   splitArgs(arg :: args, _ :: arguments) =
-                            let
-                                val (useArgs, discards) = splitArgs(args, arguments)
-                            in
-                                (arg :: useArgs, discards)
+                                case Array.sub(locals, addr) of
+                                    [] => (useArgs, NullBinding argVal :: discards)
+                                |   _ => (arg :: useArgs, discards)
                             end
                         |   splitArgs _ = raise InternalError "splitArgs"
 
@@ -404,8 +408,8 @@ struct
     end (* cleanProc *)
 
     val cleanProc =
-        fn (code, procUse, prev, localCount) =>
-            cleanProc(code, procUse, fn (i, _) => prev i, fn _ => (), localCount, fn _ => ())
+        fn (code, prev, localCount) =>
+            cleanProc(code, [UseExport], fn (i, _) => prev i, fn _ => (), localCount, fn _ => ())
 
     structure Sharing =
     struct
