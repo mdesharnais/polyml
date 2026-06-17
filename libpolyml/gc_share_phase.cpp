@@ -95,7 +95,6 @@
 
 #include <array>
 #include <cinttypes>
-#include <random>
 
 #include "globals.h"
 #include "processes.h"
@@ -593,221 +592,120 @@ void GetSharing::Completed(PolyObject *obj)
     // TODO: We don't attempt to share closure cells in 32-in-64.
 }
 
-PolyObject * pickPivot(PolyObject *head, POLYUNSIGNED nItems)
-{
-    thread_local std::mt19937 gen{}; // mersenne_twister_engine seeded with rd()
-    std::uniform_int_distribution<> distrib(0, nItems-1);
-    int index = distrib(gen);
-    // Skip the index-1 first elements
-    for (int i = 0; i < index; i += 1) {
-        head = head->GetForwardingPtr();
-    }
-
-    return head;
-}
-
-// Quicksort the list to detect cells with the same content.  These are made
-// to share and removed from further sorting.
-void SortVector::sortList(PolyObject *head, POLYUNSIGNED nItems, POLYUNSIGNED &shareCount, std::uint64_t &comparisonCount) {
-    while (nItems > 2) {
-        size_t bytesToCompare = OBJ_OBJECT_LENGTH(lengthWord)*sizeof(PolyWord);
-        PolyObject *median = head;
-        PolyObject *left = ENDOFLIST, *right = ENDOFLIST;
-        POLYUNSIGNED leftCount = 0, rightCount = 0;
-        while (head != ENDOFLIST) {
-            PolyObject *next = head->GetForwardingPtr();
-            // We skip the pivot element but compare all other elements
-            if (median != head) {
-                comparisonCount += 1;
-                int res = memcmp(median, head, bytesToCompare);
-                if (res == 0) {
-                    // Equal - they can share
-                    shareWith(head, median);
-                    shareCount++;
-                } else if (res < 0) {
-                    head->SetForwardingPtr(left);
-                    left = head;
-                    leftCount++;
-                } else {
-                    head->SetForwardingPtr(right);
-                    right = head;
-                    rightCount++;
-                }
-            }
-            head = next;
-        }
-
-        // Now that we have split the full list, we can handle the pivot.
-        median->SetLengthWord(lengthWord);
-
-        // We can now drop the median and anything that shares with it.
-        // Process the smaller partition recursively and the larger by
-        // tail recursion.
-        if (leftCount < rightCount)
-        {
-            sortList(left, leftCount, shareCount, comparisonCount);
-            head = right;
-            nItems = rightCount;
-        }
-        else
-        {
-            sortList(right, rightCount, shareCount, comparisonCount);
-            head = left;
-            nItems = leftCount;
-        }
-    }
-    if (nItems == 1)
-        head->SetLengthWord(lengthWord);
-    else if (nItems == 2) {
-        PolyObject *next = head->GetForwardingPtr();
-        head->SetLengthWord(lengthWord);
-        comparisonCount += 1;
-        if (memcmp(head, next, OBJ_OBJECT_LENGTH(lengthWord)*sizeof(PolyWord)) == 0) {
-            shareWith(next, head);
-            shareCount++;
-        }
-        else next->SetLengthWord(lengthWord);
-    }
-}
-
-PolyObject* mergeSortedListsAndShareDuplicates(PolyObject *left, PolyObject *right, size_t bytesToCompare, std::uint64_t &comparisonCount, POLYUNSIGNED &shareCount) {
-    PolyObject *result = ENDOFLIST;
+PolyObject* mergeLists(PolyObject *left, PolyObject *right, size_t bytesToCompare, std::uint64_t &comparisonCount, POLYUNSIGNED &shareCount, POLYUNSIGNED lengthWord) {
+    // The accumulator will be built in reverse order, with bigger elements at the front and smaller elements at the back.
+    PolyObject *accumulator = ENDOFLIST;
     while (left != ENDOFLIST && right != ENDOFLIST) {
         comparisonCount += 1;
         int res = memcmp(left, right, bytesToCompare);
-        /*if (res == 0) {
+        /* if (res == 0) {
+            PolyObject *next = left->GetForwardingPtr();
+
             // Equal - they can share
             shareWith(left, right);
             shareCount++;
 
-            // Keep the shared object in the list
-            result = right;
-
-            // Advance both lists
-            PolyObject *nextLeft = left->GetForwardingPtr();
-            left = nextLeft;
-            PolyObject *nextRight = right->GetForwardingPtr();
-            right = nextRight;
-        } else */ if (res <= 0) {
-            PolyObject *next = left->GetForwardingPtr();
-            left->SetForwardingPtr(result);
-            result = left;
             left = next;
-        } else {
+        } else */ if (res >= 0) {
             PolyObject *next = right->GetForwardingPtr();
-            right->SetForwardingPtr(result);
-            result = right;
+            right->SetForwardingPtr(accumulator);
+            accumulator = right;
             right = next;
+        } else {
+            PolyObject *next = left->GetForwardingPtr();
+            left->SetForwardingPtr(accumulator);
+            accumulator = left;
+            left = next;
         }
     }
 
-    // Either left or right may have elements left; consume them.
-    // (Only one of the following loops will actually be entered.)
-    while (left != ENDOFLIST) {
-        PolyObject *next = left->GetForwardingPtr();
-        left->SetForwardingPtr(result);
+    ASSERT(left == ENDOFLIST || right == ENDOFLIST);
+
+    // Either left or right may have elements left;
+    // all of them are greater than the front of the accumulator.
+    PolyObject *result = ENDOFLIST;
+    if (left != ENDOFLIST) {
         result = left;
-        left = next;
-    }
-    while (right != ENDOFLIST) {
-        PolyObject *next = right->GetForwardingPtr();
-        right->SetForwardingPtr(result);
+    } else {
         result = right;
-        right = next;
+    }
+
+    // Reverse the accumulated elements and prepend them to the result list.
+    while (accumulator != ENDOFLIST) {
+        PolyObject *next = accumulator->GetForwardingPtr();
+
+        // Invariant: next < accumulator < result
+        ASSERT(accumulator == ENDOFLIST || next == ENDOFLIST || memcmp(accumulator, next, bytesToCompare) >= 0);
+        ASSERT(accumulator == ENDOFLIST || result == ENDOFLIST || memcmp(accumulator, result, bytesToCompare) <= 0);
+
+        accumulator->SetForwardingPtr(result);
+        result = accumulator;
+        accumulator = next;
     }
 
     return result;
 }
 
-// void SortVector::sortList(PolyObject *head, POLYUNSIGNED nItems, POLYUNSIGNED &shareCount, std::uint64_t &comparisonCount) {
-//     size_t bytesToCompare = OBJ_OBJECT_LENGTH(lengthWord)*sizeof(PolyWord);
-//     std::uint64_t localComparisonCount = 0;
-//     POLYUNSIGNED localShareCount = 0;
+// Mergesort the list to detect cells with the same content.
+// These are made to share and removed from further sorting.
+void SortVector::sortList(PolyObject *head, POLYUNSIGNED nItems, POLYUNSIGNED &shareCount, std::uint64_t &comparisonCount) {
+    size_t bytesToCompare = OBJ_OBJECT_LENGTH(lengthWord)*sizeof(PolyWord);
+    std::uint64_t localComparisonCount = 0;
+    POLYUNSIGNED localShareCount = 0;
 
-//     // Each list at position i of the array is sorted, does not contain duplicates, and has size <= 2^i.
-//     // The only exception is the list at the back that can grow to an arbitrary size.
-//     std::array<PolyObject *, 4> array;
-//     array.fill(ENDOFLIST);
+    // Each list at position i of the array is sorted, does not contain duplicates, and has size <= 2^i.
+    // The only exception is the list at the back that can grow to an arbitrary size.
+    std::array<PolyObject *, 32> array;
+    array.fill(ENDOFLIST);
 
-//     while (head != ENDOFLIST) {
-//         PolyObject *next = head->GetForwardingPtr();
-//         head->SetForwardingPtr(ENDOFLIST);
-//         std::size_t i = 0;
-//         while (i < array.size() && array[i] != ENDOFLIST) {
-//             head = mergeSortedListsAndShareDuplicates(array[i], head, bytesToCompare, localComparisonCount, localShareCount);
-//             array[i] = ENDOFLIST;
-//             i += 1;
-//         }
+    while (head != ENDOFLIST) {
+        PolyObject *next = head->GetForwardingPtr();
+        head->SetForwardingPtr(ENDOFLIST);
+        std::size_t i = 0;
+        while (i < array.size() && array[i] != ENDOFLIST) {
+            head = mergeLists(head, array[i], bytesToCompare, localComparisonCount, localShareCount, lengthWord);
+            array[i] = ENDOFLIST;
+            i += 1;
+        }
 
-//         // Write the result back into the array; accumulate very long lists at the back.
-//         if (i < array.size()) {
-//             array[i] = head;
-//         } else {
-//             // share duplicates
-//             while (head != ENDOFLIST) {
-//                 PolyObject *next = head->GetForwardingPtr();
+        // Write the result back into the array; accumulate very long lists at the back.
+        if (i < array.size()) {
+            array[i] = head;
+        } else {
+            array.back() = head;
+        }
+        head = next;
+    }
 
-//                 // First comparison in the loop condition
-//                 localComparisonCount += 1;
-//                 while (next != ENDOFLIST && memcmp(head, next, bytesToCompare) == 0) {
-//                     PolyObject *nextnext = next->GetForwardingPtr();
+    // Merge the array into a single list to remove duplicates between lists.
+    PolyObject *result = ENDOFLIST;
+    for (PolyObject *&list : array) {
+        result = mergeLists(list, result, bytesToCompare, localComparisonCount, localShareCount, lengthWord);
+    }
 
-//                     // Equal - they can share
-//                     shareWith(next, head);
-//                     localShareCount += 1;
+    while (result != ENDOFLIST) {
+        PolyObject *next = result->GetForwardingPtr();
 
-//                     next = nextnext;
+        // Skip and share the following consecutive equal elements
+        localComparisonCount += 1; // First comparison in the loop condition
+        while (next != ENDOFLIST && memcmp(result, next, bytesToCompare) == 0) {
+            PolyObject *nextnext = next->GetForwardingPtr();
 
-//                     // Next comparison in the loop condition
-//                     localComparisonCount += 1;
-//                 }
+            shareWith(next, result);
+            localShareCount += 1;
 
-//                 head->SetLengthWord(lengthWord);
-//                 head = next;
-//             }
+            next = nextnext;
 
-//             array.back() = head;
-//         }
-//         head = next;
-//     }
+            localComparisonCount += 1; // Next comparison in the loop condition
+        }
 
-//     // Merge the array into a single list to remove duplicates between lists.
-//     PolyObject *result = ENDOFLIST;
-//     for (PolyObject *&list : array) {
-//         result = mergeSortedListsAndShareDuplicates(list, result, bytesToCompare, localComparisonCount, localShareCount);
-//     }
+        result->SetLengthWord(lengthWord);
+        result = next;
+    }
 
-//     // while (result != ENDOFLIST) {
-//     //     PolyObject *next = result->GetForwardingPtr();
-//     //     result->SetLengthWord(lengthWord);
-//     //     result = next;
-//     // }
-
-//     while (result != ENDOFLIST) {
-//         PolyObject *next = result->GetForwardingPtr();
-
-//         // First comparison in the loop condition
-//         localComparisonCount += 1;
-//         while (next != ENDOFLIST && memcmp(result, next, bytesToCompare) == 0) {
-//             PolyObject *nextnext = next->GetForwardingPtr();
-
-//             // Equal - they can share
-//             shareWith(next, result);
-//             localShareCount += 1;
-
-//             next = nextnext;
-
-//             // Next comparison in the loop condition
-//             localComparisonCount += 1;
-//         }
-
-//         result->SetLengthWord(lengthWord);
-//         result = next;
-//     }
-
-//     shareCount += localShareCount;
-//     comparisonCount += localComparisonCount;
-// }
+    shareCount += localShareCount;
+    comparisonCount += localComparisonCount;
+}
 
 void SortVector::sharingTask(GCTaskId*, void *a, void *b)
 {
@@ -861,7 +759,7 @@ void SortVector::wordDataTask(GCTaskId*, void *a, void *)
                 if (state == FORWARDED)
                 {
                     // Update the addresses of objects that have been merged
-                    h->Set(i, p->GetForwardingPtr());
+                    h->Set(i, p->FollowForwardingChain());
                     s->carryOver++;
                     break;
                 }
