@@ -598,6 +598,7 @@ PolyObject* mergeLists(PolyObject *left, PolyObject *right, size_t bytesToCompar
     while (left != ENDOFLIST && right != ENDOFLIST) {
         comparisonCount += 1;
         int res = memcmp(left, right, bytesToCompare);
+        // TODO1: Figure out why uncommenting this produces a segmentation fault during compilation
         /* if (res == 0) {
             PolyObject *next = left->GetForwardingPtr();
 
@@ -686,6 +687,7 @@ void SortVector::sortList(PolyObject *head, POLYUNSIGNED nItems, POLYUNSIGNED &s
     while (result != ENDOFLIST) {
         PolyObject *next = result->GetForwardingPtr();
 
+        // TODO2: Remove this code, which will become redundant, once TODO1 is solved.
         // Skip and share the following consecutive equal elements
         localComparisonCount += 1; // First comparison in the loop condition
         while (next != ENDOFLIST && memcmp(result, next, bytesToCompare) == 0) {
