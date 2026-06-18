@@ -153,10 +153,11 @@ objectState getObjectState(PolyObject *p)
 class ObjEntry
 {
 public:
-    ObjEntry(): objList(ENDOFLIST), objCount(0), shareCount(0), comparisonCount(0) {}
+    ObjEntry(): objList(ENDOFLIST), objCount(0), shareCount(0), movementCount(0), comparisonCount(0) {}
     PolyObject *objList;
     POLYUNSIGNED objCount;
     POLYUNSIGNED shareCount;
+    std::uint64_t movementCount;
     std::uint64_t comparisonCount;
 };
 
@@ -171,6 +172,7 @@ public:
     POLYUNSIGNED TotalCount() const { return totalCount; }
     POLYUNSIGNED CurrentCount() const { return baseObject.objCount; }
     POLYUNSIGNED Shared() const;
+    std::uint64_t MovementCount() const;
     std::uint64_t ComparisonCount() const;
     void SetLengthWord(POLYUNSIGNED l) { lengthWord = l; }
     POLYUNSIGNED CarryOver() const { return carryOver; }
@@ -180,7 +182,7 @@ public:
     static void wordDataTask(GCTaskId*, void *a, void *b);
 
 private:
-    void sortList(PolyObject *head, POLYUNSIGNED nItems, POLYUNSIGNED &sharedCount, std::uint64_t &comparisonCount);
+    void sortList(PolyObject *head, POLYUNSIGNED nItems, POLYUNSIGNED &sharedCount, std::uint64_t &movementCount, std::uint64_t &comparisonCount);
 
     ObjEntry baseObject, processObjects[256];
     POLYUNSIGNED totalCount;
@@ -195,6 +197,15 @@ POLYUNSIGNED SortVector::Shared() const
     for (unsigned i = 0; i < 256; i++)
         shareCount += processObjects[i].shareCount;
     return shareCount;
+}
+
+std::uint64_t SortVector::MovementCount() const
+{
+    // Add all the movement counts
+    std::uint64_t count = baseObject.movementCount;
+    for (unsigned i = 0; i < 256; i++)
+        count += processObjects[i].movementCount;
+    return count;
 }
 
 std::uint64_t SortVector::ComparisonCount() const
@@ -592,14 +603,22 @@ void GetSharing::Completed(PolyObject *obj)
     // TODO: We don't attempt to share closure cells in 32-in-64.
 }
 
-PolyObject* mergeLists(PolyObject *left, PolyObject *right, size_t bytesToCompare, std::uint64_t &comparisonCount, POLYUNSIGNED &shareCount, POLYUNSIGNED lengthWord) {
+PolyObject* mergeLists(
+    PolyObject *left,
+    PolyObject *right,
+    size_t bytesToCompare,
+    std::uint64_t &movementCount,
+    std::uint64_t &comparisonCount,
+    POLYUNSIGNED &shareCount,
+    POLYUNSIGNED lengthWord) {
     // The accumulator will be built in reverse order, with bigger elements at the front and smaller elements at the back.
     PolyObject *accumulator = ENDOFLIST;
     while (left != ENDOFLIST && right != ENDOFLIST) {
         comparisonCount += 1;
         int res = memcmp(left, right, bytesToCompare);
         // TODO1: Figure out why uncommenting this produces a segmentation fault during compilation
-        /* if (res == 0) {
+        if (res == 0) {
+            movementCount += 1;
             PolyObject *next = left->GetForwardingPtr();
 
             // Equal - they can share
@@ -607,12 +626,14 @@ PolyObject* mergeLists(PolyObject *left, PolyObject *right, size_t bytesToCompar
             shareCount++;
 
             left = next;
-        } else */ if (res >= 0) {
+        } else if (res >= 0) {
+            movementCount += 1;
             PolyObject *next = right->GetForwardingPtr();
             right->SetForwardingPtr(accumulator);
             accumulator = right;
             right = next;
         } else {
+            movementCount += 1;
             PolyObject *next = left->GetForwardingPtr();
             left->SetForwardingPtr(accumulator);
             accumulator = left;
@@ -633,9 +654,11 @@ PolyObject* mergeLists(PolyObject *left, PolyObject *right, size_t bytesToCompar
 
     // Reverse the accumulated elements and prepend them to the result list.
     while (accumulator != ENDOFLIST) {
+        movementCount += 1;
         PolyObject *next = accumulator->GetForwardingPtr();
 
-        // Invariant: next < accumulator < result
+        // Invariants: accumulator is not forwarding and next < accumulator < result
+        ASSERT(getObjectState(accumulator) != FORWARDED);
         ASSERT(accumulator == ENDOFLIST || next == ENDOFLIST || memcmp(accumulator, next, bytesToCompare) >= 0);
         ASSERT(accumulator == ENDOFLIST || result == ENDOFLIST || memcmp(accumulator, result, bytesToCompare) <= 0);
 
@@ -649,9 +672,15 @@ PolyObject* mergeLists(PolyObject *left, PolyObject *right, size_t bytesToCompar
 
 // Mergesort the list to detect cells with the same content.
 // These are made to share and removed from further sorting.
-void SortVector::sortList(PolyObject *head, POLYUNSIGNED nItems, POLYUNSIGNED &shareCount, std::uint64_t &comparisonCount) {
+void SortVector::sortList(
+    PolyObject *head,
+    POLYUNSIGNED nItems,
+    POLYUNSIGNED &shareCount,
+    std::uint64_t &movementCount,
+    std::uint64_t &comparisonCount) {
     size_t bytesToCompare = OBJ_OBJECT_LENGTH(lengthWord)*sizeof(PolyWord);
     std::uint64_t localComparisonCount = 0;
+    std::uint64_t localMovementCount = 0;
     POLYUNSIGNED localShareCount = 0;
 
     // Each list at position i of the array is sorted, does not contain duplicates, and has size <= 2^i.
@@ -660,11 +689,12 @@ void SortVector::sortList(PolyObject *head, POLYUNSIGNED nItems, POLYUNSIGNED &s
     array.fill(ENDOFLIST);
 
     while (head != ENDOFLIST) {
+        localMovementCount += 1;
         PolyObject *next = head->GetForwardingPtr();
         head->SetForwardingPtr(ENDOFLIST);
         std::size_t i = 0;
         while (i < array.size() && array[i] != ENDOFLIST) {
-            head = mergeLists(head, array[i], bytesToCompare, localComparisonCount, localShareCount, lengthWord);
+            head = mergeLists(head, array[i], bytesToCompare, localMovementCount, localComparisonCount, localShareCount, lengthWord);
             array[i] = ENDOFLIST;
             i += 1;
         }
@@ -681,39 +711,123 @@ void SortVector::sortList(PolyObject *head, POLYUNSIGNED nItems, POLYUNSIGNED &s
     // Merge the array into a single list to remove duplicates between lists.
     PolyObject *result = ENDOFLIST;
     for (PolyObject *&list : array) {
-        result = mergeLists(list, result, bytesToCompare, localComparisonCount, localShareCount, lengthWord);
+        result = mergeLists(list, result, bytesToCompare, localMovementCount, localComparisonCount, localShareCount, lengthWord);
     }
 
     while (result != ENDOFLIST) {
+        localMovementCount += 1;
         PolyObject *next = result->GetForwardingPtr();
 
         // TODO2: Remove this code, which will become redundant, once TODO1 is solved.
         // Skip and share the following consecutive equal elements
-        localComparisonCount += 1; // First comparison in the loop condition
-        while (next != ENDOFLIST && memcmp(result, next, bytesToCompare) == 0) {
-            PolyObject *nextnext = next->GetForwardingPtr();
+        // localComparisonCount += 1; // First comparison in the loop condition
+        // while (next != ENDOFLIST && memcmp(result, next, bytesToCompare) == 0) {
+        //     localMovementCount += 1;
+        //     PolyObject *nextnext = next->GetForwardingPtr();
 
-            shareWith(next, result);
-            localShareCount += 1;
+        //     shareWith(next, result);
+        //     localShareCount += 1;
 
-            next = nextnext;
+        //     next = nextnext;
 
-            localComparisonCount += 1; // Next comparison in the loop condition
-        }
+        //     localComparisonCount += 1; // Next comparison in the loop condition
+        // }
 
         result->SetLengthWord(lengthWord);
         result = next;
     }
 
     shareCount += localShareCount;
+    movementCount += localMovementCount;
     comparisonCount += localComparisonCount;
 }
+
+// Quicksort the list to detect cells with the same content.
+// These are made to share and removed from further sorting.
+// void SortVector::sortList(
+//     PolyObject *head,
+//     POLYUNSIGNED nItems,
+//     POLYUNSIGNED &shareCount,
+//     std::uint64_t &movementCount,
+//     std::uint64_t &comparisonCount) {
+//     while (nItems > 2) {
+//         size_t bytesToCompare = OBJ_OBJECT_LENGTH(lengthWord)*sizeof(PolyWord);
+//         PolyObject *median = head;
+//         PolyObject *left = ENDOFLIST, *right = ENDOFLIST;
+//         POLYUNSIGNED leftCount = 0, rightCount = 0;
+//         while (head != ENDOFLIST) {
+//             movementCount += 1;
+//             PolyObject *next = head->GetForwardingPtr();
+//             // We skip the pivot element but compare all other elements
+//             if (median != head) {
+//                 comparisonCount += 1;
+//                 int res = memcmp(median, head, bytesToCompare);
+//                 if (res == 0) {
+//                     // Equal - they can share
+//                     shareWith(head, median);
+//                     shareCount++;
+//                 } else if (res < 0) {
+//                     head->SetForwardingPtr(left);
+//                     left = head;
+//                     leftCount++;
+//                 } else {
+//                     head->SetForwardingPtr(right);
+//                     right = head;
+//                     rightCount++;
+//                 }
+//             }
+//             head = next;
+//         }
+
+//         // Now that we have split the full list, we can handle the pivot.
+//         median->SetLengthWord(lengthWord);
+
+//         // We can now drop the median and anything that shares with it.
+//         // Process the smaller partition recursively and the larger by
+//         // tail recursion.
+//         if (leftCount < rightCount)
+//         {
+//             sortList(left, leftCount, shareCount, movementCount, comparisonCount);
+//             head = right;
+//             nItems = rightCount;
+//         }
+//         else
+//         {
+//             sortList(right, rightCount, shareCount, movementCount, comparisonCount);
+//             head = left;
+//             nItems = leftCount;
+//         }
+//     }
+
+//     if (nItems == 1)
+//         head->SetLengthWord(lengthWord);
+//     else if (nItems == 2) {
+//         movementCount += 1;
+//         PolyObject *next = head->GetForwardingPtr();
+//         head->SetLengthWord(lengthWord);
+//         comparisonCount += 1;
+//         if (memcmp(head, next, OBJ_OBJECT_LENGTH(lengthWord)*sizeof(PolyWord)) == 0) {
+//             shareWith(next, head);
+//             shareCount++;
+//         }
+//         else next->SetLengthWord(lengthWord);
+//     }
+// }
+
 
 void SortVector::sharingTask(GCTaskId*, void *a, void *b)
 {
     SortVector *s = (SortVector *)a;
     ObjEntry *o = (ObjEntry*)b;
-    s->sortList(o->objList, o->objCount, o->shareCount, o->comparisonCount);
+    s->sortList(o->objList, o->objCount, o->shareCount, o->movementCount, o->comparisonCount);
+}
+
+PolyObject *checkStateAndFollowForwardingChain(PolyObject *obj) {
+    if (getObjectState(obj) == FORWARDED) {
+        return checkStateAndFollowForwardingChain(obj->GetForwardingPtr());
+    } else {
+        return obj;
+    }
 }
 
 // Process one level of the word data.
@@ -761,7 +875,7 @@ void SortVector::wordDataTask(GCTaskId*, void *a, void *)
                 if (state == FORWARDED)
                 {
                     // Update the addresses of objects that have been merged
-                    h->Set(i, p->FollowForwardingChain());
+                    h->Set(i, checkStateAndFollowForwardingChain(p));
                     s->carryOver++;
                     break;
                 }
@@ -914,6 +1028,7 @@ void GetSharing::SortData()
     // Now process the word entries until we have nothing left apart from loops.
     POLYUNSIGNED lastCount = 0, lastShared = 0;
     std::uint64_t lastComparisonCount = 0;
+    std::uint64_t lastMovementCount = 0;
     for (unsigned n = 0; n < NUM_WORD_VECTORS; n++)
         lastCount += wordVectors[n].CurrentCount();
 
@@ -925,21 +1040,24 @@ void GetSharing::SortData()
         // At each stage check that we have removed some items
         // from the lists.
         POLYUNSIGNED postCount = 0, postShared = 0, carryOver = 0;
+        std::uint64_t postMovementCount = 0;
         std::uint64_t postComparisonCount = 0;
         for (unsigned i = 0; i < NUM_WORD_VECTORS; i++)
         {
             postCount += wordVectors[i].CurrentCount();
             postShared += wordVectors[i].Shared();
+            postMovementCount += wordVectors[i].MovementCount();
             postComparisonCount += wordVectors[i].ComparisonCount();
             carryOver += wordVectors[i].CarryOver();
         }
 
         if (debugOptions & DEBUG_GC)
-            Log("GC: Share: Pass %u: %" POLYUFMT " removed (%1.1f%%) %" POLYUFMT " shared (%1.1f%%) %" POLYUFMT " remain. %" POLYUFMT " entries updated (%1.1f%%). %" PRIu64 " comparisons\n",
+            Log("GC: Share: Pass %u: %" POLYUFMT " removed (%1.1f%%) %" POLYUFMT " shared (%1.1f%%) %" POLYUFMT " remain. %" POLYUFMT " entries updated (%1.1f%%). %" PRIu64 " comparisons and %" PRIu64 " movements\n",
                 pass, lastCount-postCount, (double)(lastCount-postCount) / (double) lastCount * 100.0,
                 postShared - lastShared, (double)(postShared - lastShared) / (double) (lastCount-postCount) * 100.0,
                 postCount, carryOver, (double)carryOver / (double)(lastCount-postCount) * 100.0,
-                postComparisonCount - lastComparisonCount);
+                postComparisonCount - lastComparisonCount,
+                postMovementCount - lastMovementCount);
 
 		gcProgressSetPercent((unsigned)((double)(totalVisited - postCount) / (double)totalVisited * 100.0));
 
@@ -957,6 +1075,7 @@ void GetSharing::SortData()
 
         lastCount = postCount;
         lastShared = postShared;
+        lastMovementCount = postMovementCount;
         lastComparisonCount = postComparisonCount;
     }
 
@@ -981,35 +1100,45 @@ void GetSharing::SortData()
 
     // Calculate the totals.
     POLYUNSIGNED totalSize = 0, totalShared = 0, totalRecovered = 0;
+    std::uint64_t totalMovementCount = 0;
+    std::uint64_t totalComparisonCount = 0;
     for (unsigned k = 0; k < NUM_BYTE_VECTORS; k++)
     {
         POLYUNSIGNED totalCount = byteVectors[k].TotalCount();
         POLYUNSIGNED shared = byteVectors[k].Shared();
+        std::uint64_t movementCount = byteVectors[k].MovementCount();
+        std::uint64_t comparisonCount = byteVectors[k].ComparisonCount();
         totalSize += totalCount;
         totalShared += shared;
+        totalMovementCount += movementCount;
+        totalComparisonCount += comparisonCount;
         totalRecovered += shared * (k+1); // Add 1 for the length word.
         if (debugOptions & DEBUG_GC)
-            Log("GC: Share: Byte objects of size %u: %" POLYUFMT " objects %" POLYUFMT " shared (%1.1f%%)\n",
-                k, totalCount, shared, totalCount == 0 ? 0.0 : ((double)shared / (double)totalCount * 100.0));
+            Log("GC: Share: Byte objects of size %u: %" POLYUFMT " objects %" POLYUFMT " shared (%1.1f%%) using %" PRIu64 " comparisons and %" PRIu64 " movements\n",
+                k, totalCount, shared, totalCount == 0 ? 0.0 : ((double)shared / (double)totalCount * 100.0), comparisonCount, movementCount);
     }
+
 
     for (unsigned l = 0; l < NUM_WORD_VECTORS; l++)
     {
         POLYUNSIGNED totalCount = wordVectors[l].TotalCount();
         POLYUNSIGNED shared = wordVectors[l].Shared();
+        std::uint64_t movementCount = wordVectors[l].MovementCount();
         std::uint64_t comparisonCount = wordVectors[l].ComparisonCount();
         totalSize += totalCount;
         totalShared += shared;
+        totalMovementCount += movementCount;
+        totalComparisonCount += comparisonCount;
         totalRecovered += shared * (l+1);
         if (debugOptions & DEBUG_GC)
-            Log("GC: Share: Word objects of size %u: %" POLYUFMT " objects %" POLYUFMT " shared (%1.1f%%) using %" PRIu64 " comparisons\n",
-                l, totalCount, shared, totalCount == 0 ? 0.0 : ((double)shared / (double)totalCount * 100.0), comparisonCount);
+            Log("GC: Share: Word objects of size %u: %" POLYUFMT " objects %" POLYUFMT " shared (%1.1f%%) using %" PRIu64 " comparisons and %" PRIu64 " movements\n",
+                l, totalCount, shared, totalCount == 0 ? 0.0 : ((double)shared / (double)totalCount * 100.0), comparisonCount, movementCount);
     }
 
     if (debugOptions & DEBUG_GC)
     {
-        Log("GC: Share: Total %" POLYUFMT " objects, %" POLYUFMT " shared (%1.0f%%).  %" POLYUFMT " words recovered.\n",
-            totalSize, totalShared, (double)totalShared / (double)totalSize * 100.0, totalRecovered);
+        Log("GC: Share: Total %" POLYUFMT " objects, %" POLYUFMT " shared (%1.0f%%) using %" PRIu64 " comparisons and %" PRIu64 " movements.  %" POLYUFMT " words recovered.\n",
+            totalSize, totalShared, (double)totalShared / (double)totalSize * 100.0, totalComparisonCount, totalMovementCount, totalRecovered);
         Log("GC: Share: Excluding %" POLYUFMT " large word objects %" POLYUFMT " large byte objects and %" POLYUFMT " others\n",
             largeWordCount, largeByteCount, excludedCount);
     }
@@ -1030,8 +1159,7 @@ void GCSharingPhase(void)
         lSpace->bitmap.ClearBits(0, lSpace->spaceSize());
     }
 
-    // Scan the code areas to share any constants.  We don't share the code
-    // cells themselves.
+    // Scan the code areas to share any constants.  We don't share the code cells themselves.
     for (std::vector<CodeSpace *>::iterator i = gMem.cSpaces.begin(); i < gMem.cSpaces.end(); i++)
     {
         CodeSpace *space = *i;
