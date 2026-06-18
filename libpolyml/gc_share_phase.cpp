@@ -686,6 +686,54 @@ PolyObject* mergeLists(
     return front;
 }
 
+void shareDuplicatesAndSetLengthWord(
+    PolyObject *left,
+    PolyObject *right,
+    POLYUNSIGNED lengthWord,
+    size_t bytesToCompare,
+    std::uint64_t &movementCount,
+    std::uint64_t &comparisonCount,
+    POLYUNSIGNED &shareCount) {
+    while (left != ENDOFLIST && right != ENDOFLIST) {
+        comparisonCount += 1;
+        int res = memcmp(left, right, bytesToCompare);
+        if (res == 0) {
+            movementCount += 1;
+            PolyObject *next = left->GetForwardingPtr();
+
+            // Equal - they can share
+            shareWith(left, right);
+            shareCount += 1;
+
+            left = next;
+        } else if (res >= 0) {
+            movementCount += 1;
+            PolyObject *next = right->GetForwardingPtr();
+            right->SetLengthWord(lengthWord);
+            right = next;
+        } else {
+            movementCount += 1;
+            PolyObject *next = left->GetForwardingPtr();
+            left->SetLengthWord(lengthWord);
+            left = next;
+        }
+    }
+
+    while (left != ENDOFLIST) {
+        movementCount += 1;
+        PolyObject *next = left->GetForwardingPtr();
+        left->SetLengthWord(lengthWord);
+        left = next;
+    }
+
+    while (right != ENDOFLIST) {
+        movementCount += 1;
+        PolyObject *next = right->GetForwardingPtr();
+        right->SetLengthWord(lengthWord);
+        right = next;
+    }
+}
+
 // Mergesort the list to detect cells with the same content.
 // These are made to share and removed from further sorting.
 void SortVector::sortList(
@@ -725,33 +773,44 @@ void SortVector::sortList(
     }
 
     // Merge the array into a single list to remove duplicates between lists.
+    // First, find the index of the last list containing elements.
+    std::size_t lastList = 0;
+    for (std::size_t i = 0; i < array.size(); i += 1) {
+        if (array[i] != ENDOFLIST) {
+            lastList = i;
+        }
+    }
+    // Second, merge all but the last list together.
     PolyObject *result = ENDOFLIST;
-    for (PolyObject *&list : array) {
-        result = mergeLists(list, result, bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
+    for (std::size_t i = 0; i < lastList; i += 1) {
+        result = mergeLists(array[i], result, bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
     }
+    // Third, share common objects in between the resulting list and the last list of the array;
+    // However, instead of merging the list, set the length word on the nonforwarding objects.
+    shareDuplicatesAndSetLengthWord(result, array[lastList], lengthWord, bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
 
-    while (result != ENDOFLIST) {
-        localMovementCount += 1;
-        PolyObject *next = result->GetForwardingPtr();
+    // while (result != ENDOFLIST) {
+    //     localMovementCount += 1;
+    //     PolyObject *next = result->GetForwardingPtr();
 
-        // TODO2: Remove this code, which will become redundant, once TODO1 is solved.
-        // Skip and share the following consecutive equal elements
-        // localComparisonCount += 1; // First comparison in the loop condition
-        // while (next != ENDOFLIST && memcmp(result, next, bytesToCompare) == 0) {
-        //     localMovementCount += 1;
-        //     PolyObject *nextnext = next->GetForwardingPtr();
+    //     // TODO2: Remove this code, which will become redundant, once TODO1 is solved.
+    //     // Skip and share the following consecutive equal elements
+    //     // localComparisonCount += 1; // First comparison in the loop condition
+    //     // while (next != ENDOFLIST && memcmp(result, next, bytesToCompare) == 0) {
+    //     //     localMovementCount += 1;
+    //     //     PolyObject *nextnext = next->GetForwardingPtr();
 
-        //     shareWith(next, result);
-        //     localShareCount += 1;
+    //     //     shareWith(next, result);
+    //     //     localShareCount += 1;
 
-        //     next = nextnext;
+    //     //     next = nextnext;
 
-        //     localComparisonCount += 1; // Next comparison in the loop condition
-        // }
+    //     //     localComparisonCount += 1; // Next comparison in the loop condition
+    //     // }
 
-        result->SetLengthWord(lengthWord);
-        result = next;
-    }
+    //     result->SetLengthWord(lengthWord);
+    //     result = next;
+    // }
 
     shareCount += localShareCount;
     movementCount += localMovementCount;
