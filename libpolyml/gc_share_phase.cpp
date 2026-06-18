@@ -609,11 +609,17 @@ PolyObject* mergeLists(
     size_t bytesToCompare,
     std::uint64_t &movementCount,
     std::uint64_t &comparisonCount,
-    POLYUNSIGNED &shareCount,
-    POLYUNSIGNED lengthWord) {
-    // The accumulator will be built in reverse order, with bigger elements at the front and smaller elements at the back.
-    PolyObject *accumulator = ENDOFLIST;
+    POLYUNSIGNED &shareCount) {
+    // We will accumulate elements in increasing order in a list.
+    // The variable front will point at the start of the list and only be set once.
+    // The variable back will point at the back of the list and be used to append elements.
+    PolyObject *front = ENDOFLIST;
+    PolyObject *back = ENDOFLIST;
+
     while (left != ENDOFLIST && right != ENDOFLIST) {
+        // Front and back are either both set or both unset.
+        ASSERT((front == ENDOFLIST) == (back == ENDOFLIST));
+
         comparisonCount += 1;
         int res = memcmp(left, right, bytesToCompare);
         // TODO1: Figure out why uncommenting this produces a segmentation fault during compilation
@@ -623,51 +629,63 @@ PolyObject* mergeLists(
 
             // Equal - they can share
             shareWith(left, right);
-            shareCount++;
+            shareCount += 1;
 
             left = next;
         } else if (res >= 0) {
             movementCount += 1;
             PolyObject *next = right->GetForwardingPtr();
-            right->SetForwardingPtr(accumulator);
-            accumulator = right;
+
+            right->SetForwardingPtr(ENDOFLIST);
+            if (back == ENDOFLIST) {
+                // The accumulator list is empty; we initialize it.
+                front = right;
+            } else {
+                // The accumulator list is nonempty; we append the element at the back.
+                back->SetForwardingPtr(right);
+            }
+            back = right;
+
             right = next;
         } else {
             movementCount += 1;
             PolyObject *next = left->GetForwardingPtr();
-            left->SetForwardingPtr(accumulator);
-            accumulator = left;
+
+            left->SetForwardingPtr(ENDOFLIST);
+            if (back == ENDOFLIST) {
+                // The accumulator list is empty; we initialize it.
+                front = left;
+            } else {
+                // The accumulator list is nonempty; we append the element at the back.
+                back->SetForwardingPtr(left);
+            }
+            back = left;
+
             left = next;
         }
     }
 
+    // Either left is empty, or right is empty, or both are empty.
     ASSERT(left == ENDOFLIST || right == ENDOFLIST);
-
-    // Either left or right may have elements left;
-    // all of them are greater than the front of the accumulator.
-    PolyObject *result = ENDOFLIST;
+    PolyObject *remaining = ENDOFLIST;
     if (left != ENDOFLIST) {
-        result = left;
+        remaining = left;
+    } else if (right != ENDOFLIST) {
+        remaining = right;
+    }
+
+    // The remaining elements are greater than the accumulated elements;
+    ASSERT(back == ENDOFLIST || remaining == ENDOFLIST || memcmp(back, remaining, bytesToCompare) <= 0);
+
+    // we can append the remaining elements at the back of the accumulator.
+    // However, the accumulator could be empty.
+    if (back == ENDOFLIST) {
+        front = remaining;
     } else {
-        result = right;
+        back->SetForwardingPtr(remaining);
     }
 
-    // Reverse the accumulated elements and prepend them to the result list.
-    while (accumulator != ENDOFLIST) {
-        movementCount += 1;
-        PolyObject *next = accumulator->GetForwardingPtr();
-
-        // Invariants: accumulator is not forwarding and next < accumulator < result
-        ASSERT(getObjectState(accumulator) != FORWARDED);
-        ASSERT(accumulator == ENDOFLIST || next == ENDOFLIST || memcmp(accumulator, next, bytesToCompare) >= 0);
-        ASSERT(accumulator == ENDOFLIST || result == ENDOFLIST || memcmp(accumulator, result, bytesToCompare) <= 0);
-
-        accumulator->SetForwardingPtr(result);
-        result = accumulator;
-        accumulator = next;
-    }
-
-    return result;
+    return front;
 }
 
 // Mergesort the list to detect cells with the same content.
@@ -694,7 +712,7 @@ void SortVector::sortList(
         head->SetForwardingPtr(ENDOFLIST);
         std::size_t i = 0;
         while (i < array.size() && array[i] != ENDOFLIST) {
-            head = mergeLists(head, array[i], bytesToCompare, localMovementCount, localComparisonCount, localShareCount, lengthWord);
+            head = mergeLists(head, array[i], bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
             array[i] = ENDOFLIST;
             i += 1;
         }
@@ -711,7 +729,7 @@ void SortVector::sortList(
     // Merge the array into a single list to remove duplicates between lists.
     PolyObject *result = ENDOFLIST;
     for (PolyObject *&list : array) {
-        result = mergeLists(list, result, bytesToCompare, localMovementCount, localComparisonCount, localShareCount, lengthWord);
+        result = mergeLists(list, result, bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
     }
 
     while (result != ENDOFLIST) {
