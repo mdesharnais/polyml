@@ -753,23 +753,35 @@ void SortVector::sortList(
     array.fill(ENDOFLIST);
 
     while (head != ENDOFLIST) {
-        localMovementCount += 1;
+        // Find the longest possible ordered prefix
+        PolyObject *orderedList = head;
         PolyObject *next = head->GetForwardingPtr();
+        localMovementCount += 1;
+        while (head != ENDOFLIST && next != ENDOFLIST && memcmp(head, next, bytesToCompare) < 0) {
+            localComparisonCount += 1;
+            head = next;
+            next = head->GetForwardingPtr();
+            localMovementCount += 1;
+        }
         head->SetForwardingPtr(ENDOFLIST);
+        // Set the new head for the next iteration.
+        head = next;
+
+        // Merge the ordered prefix with the already sorted lists.
         std::size_t i = 0;
         while (i < array.size() && array[i] != ENDOFLIST) {
-            head = mergeLists(head, array[i], bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
+            orderedList = mergeLists(orderedList, array[i], bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
             array[i] = ENDOFLIST;
             i += 1;
         }
 
         // Write the result back into the array; accumulate very long lists at the back.
         if (i < array.size()) [[likely]] {
-            array[i] = head;
+            array[i] = orderedList;
         } else [[unlikely]] {
-            array.back() = head;
+            array.back() = orderedList;
         }
-        head = next;
+
     }
 
     // Merge the array into a single list to remove duplicates between lists.
