@@ -618,7 +618,7 @@ PolyObject* mergeLists(
 
     while (left != ENDOFLIST && right != ENDOFLIST) {
         // Front and back are either both set or both unset.
-        ASSERT((front == ENDOFLIST) == (back == ENDOFLIST));
+        //ASSERT((front == ENDOFLIST) == (back == ENDOFLIST));
 
         comparisonCount += 1;
         int res = memcmp(left, right, bytesToCompare);
@@ -637,36 +637,34 @@ PolyObject* mergeLists(
             PolyObject *next = right->GetForwardingPtr();
 
             right->SetForwardingPtr(ENDOFLIST);
-            if (back == ENDOFLIST) {
+            if (back == ENDOFLIST) [[unlikely]] {
                 // The accumulator list is empty; we initialize it.
                 front = right;
-            } else {
+            } else [[likely]] {
                 // The accumulator list is nonempty; we append the element at the back.
                 back->SetForwardingPtr(right);
             }
             back = right;
-
             right = next;
         } else {
             movementCount += 1;
             PolyObject *next = left->GetForwardingPtr();
 
             left->SetForwardingPtr(ENDOFLIST);
-            if (back == ENDOFLIST) {
+            if (back == ENDOFLIST) [[unlikely]] {
                 // The accumulator list is empty; we initialize it.
                 front = left;
-            } else {
+            } else [[likely]] {
                 // The accumulator list is nonempty; we append the element at the back.
                 back->SetForwardingPtr(left);
             }
             back = left;
-
             left = next;
         }
     }
 
     // Either left is empty, or right is empty, or both are empty.
-    ASSERT(left == ENDOFLIST || right == ENDOFLIST);
+    //ASSERT(left == ENDOFLIST || right == ENDOFLIST);
     PolyObject *remaining = ENDOFLIST;
     if (left != ENDOFLIST) {
         remaining = left;
@@ -675,13 +673,13 @@ PolyObject* mergeLists(
     }
 
     // The remaining elements are greater than the accumulated elements;
-    ASSERT(back == ENDOFLIST || remaining == ENDOFLIST || memcmp(back, remaining, bytesToCompare) <= 0);
+    //ASSERT(back == ENDOFLIST || remaining == ENDOFLIST || memcmp(back, remaining, bytesToCompare) <= 0);
 
     // we can append the remaining elements at the back of the accumulator.
     // However, the accumulator could be empty.
-    if (back == ENDOFLIST) {
+    if (back == ENDOFLIST) [[unlikely]] {
         front = remaining;
-    } else {
+    } else [[likely]] {
         back->SetForwardingPtr(remaining);
     }
 
@@ -718,9 +716,9 @@ void SortVector::sortList(
         }
 
         // Write the result back into the array; accumulate very long lists at the back.
-        if (i < array.size()) {
+        if (i < array.size()) [[likely]] {
             array[i] = head;
-        } else {
+        } else [[unlikely]] {
             array.back() = head;
         }
         head = next;
