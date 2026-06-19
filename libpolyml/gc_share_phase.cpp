@@ -734,6 +734,50 @@ void shareDuplicatesAndSetLengthWord(
     }
 }
 
+// Find the longest possible naturally sorted prefix, share duplicates, and return the tail.
+// Consider the list a,b,b,c,c,c,d,d,d,d,a,b,c,d,...
+// The function makes head points to a,b,c,d (i.e., in increasing order without duplicates) and
+// returns the list a,b,c,d,..
+PolyObject* splitNaturalPrefix(
+    PolyObject *head,
+    POLYUNSIGNED lengthWord,
+    size_t bytesToCompare,
+    std::uint64_t &movementCount,
+    std::uint64_t &comparisonCount,
+    POLYUNSIGNED &shareCount
+) {
+    ASSERT(head != ENDOFLIST);
+    PolyObject *next = head->GetForwardingPtr();
+    movementCount += 1;
+    int res = 0;
+    while (head != ENDOFLIST && next != ENDOFLIST && (res = memcmp(head, next, bytesToCompare)) <= 0) {
+        comparisonCount += 1;
+        if (res == 0) {
+            // We share duplicates to ensure that the list does not contain duplicates.
+            PolyObject *nextnext = next->GetForwardingPtr();
+            movementCount += 1;
+            shareWith(next, head);
+            shareCount += 1;
+            next = nextnext;
+            head->SetForwardingPtr(next);
+        } else {
+            head = next;
+            next = head->GetForwardingPtr();
+            movementCount += 1;
+        }
+    }
+
+    // while (head != ENDOFLIST && next != ENDOFLIST && memcmp(head, next, bytesToCompare) < 0) {
+    //     comparisonCount += 1;
+    //     head = next;
+    //     next = head->GetForwardingPtr();
+    //     movementCount += 1;
+    // }
+    head->SetForwardingPtr(ENDOFLIST);
+    // Set the new head for the next iteration.
+    return next;
+}
+
 // Mergesort the list to detect cells with the same content.
 // These are made to share and removed from further sorting.
 void SortVector::sortList(
@@ -755,37 +799,8 @@ void SortVector::sortList(
     while (head != ENDOFLIST) {
         // Find the longest possible ordered prefix
         PolyObject *orderedList = head;
-        PolyObject *next = head->GetForwardingPtr();
-        localMovementCount += 1;
-        {
-            int res = 0;
-            while (head != ENDOFLIST && next != ENDOFLIST && (res = memcmp(head, next, bytesToCompare)) <= 0) {
-                localComparisonCount += 1;
-                if (res == 0) {
-                    // We share duplicates to ensure that the list does not contain duplicates.
-                    PolyObject *nextnext = next->GetForwardingPtr();
-                    localMovementCount += 1;
-                    shareWith(next, head);
-                    localShareCount += 1;
-                    next = nextnext;
-                    head->SetForwardingPtr(next);
-                } else {
-                    head = next;
-                    next = head->GetForwardingPtr();
-                    localMovementCount += 1;
-                }
-            }
-        }
-
-        // while (head != ENDOFLIST && next != ENDOFLIST && memcmp(head, next, bytesToCompare) < 0) {
-        //     localComparisonCount += 1;
-        //     head = next;
-        //     next = head->GetForwardingPtr();
-        //     localMovementCount += 1;
-        // }
-        head->SetForwardingPtr(ENDOFLIST);
         // Set the new head for the next iteration.
-        head = next;
+        head = splitNaturalPrefix(head, lengthWord, bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
 
         // Merge the ordered prefix with the already sorted lists.
         std::size_t i = 0;
