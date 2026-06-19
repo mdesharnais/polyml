@@ -757,12 +757,32 @@ void SortVector::sortList(
         PolyObject *orderedList = head;
         PolyObject *next = head->GetForwardingPtr();
         localMovementCount += 1;
-        while (head != ENDOFLIST && next != ENDOFLIST && memcmp(head, next, bytesToCompare) < 0) {
-            localComparisonCount += 1;
-            head = next;
-            next = head->GetForwardingPtr();
-            localMovementCount += 1;
+        {
+            int res = 0;
+            while (head != ENDOFLIST && next != ENDOFLIST && (res = memcmp(head, next, bytesToCompare)) <= 0) {
+                localComparisonCount += 1;
+                if (res == 0) {
+                    // We share duplicates to ensure that the list does not contain duplicates.
+                    PolyObject *nextnext = next->GetForwardingPtr();
+                    localMovementCount += 1;
+                    shareWith(next, head);
+                    localShareCount += 1;
+                    next = nextnext;
+                    head->SetForwardingPtr(next);
+                } else {
+                    head = next;
+                    next = head->GetForwardingPtr();
+                    localMovementCount += 1;
+                }
+            }
         }
+
+        // while (head != ENDOFLIST && next != ENDOFLIST && memcmp(head, next, bytesToCompare) < 0) {
+        //     localComparisonCount += 1;
+        //     head = next;
+        //     next = head->GetForwardingPtr();
+        //     localMovementCount += 1;
+        // }
         head->SetForwardingPtr(ENDOFLIST);
         // Set the new head for the next iteration.
         head = next;
