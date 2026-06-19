@@ -837,8 +837,7 @@ void SortVector::sortList(
     std::uint64_t localMovementCount = 0;
     POLYUNSIGNED localShareCount = 0;
 
-    // Each list at position i of the array is sorted, does not contain duplicates, and has size <= 2^i.
-    // The only exception is the list at the back that can grow to an arbitrary size.
+    // Each list at position i of the array is sorted and does not contain duplicates.
     std::array<PolyObject *, 32> array;
     array.fill(ENDOFLIST);
 
