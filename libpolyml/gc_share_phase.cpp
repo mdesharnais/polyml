@@ -734,11 +734,16 @@ void shareDuplicatesAndSetLengthWord(
     }
 }
 
+struct splitResult {
+    PolyObject *prefix;
+    PolyObject *suffix;
+};
+
 // Find the longest possible naturally sorted prefix, share duplicates, and return the tail.
 // Consider the list a,b,b,c,c,c,d,d,d,d,a,b,c,d,...
 // The function makes head points to a,b,c,d (i.e., in increasing order without duplicates) and
 // returns the list a,b,c,d,..
-PolyObject* splitNaturalPrefix(
+splitResult splitNaturalPrefix(
     PolyObject *head,
     POLYUNSIGNED lengthWord,
     size_t bytesToCompare,
@@ -749,33 +754,74 @@ PolyObject* splitNaturalPrefix(
     ASSERT(head != ENDOFLIST);
     PolyObject *next = head->GetForwardingPtr();
     movementCount += 1;
-    int res = 0;
-    while (head != ENDOFLIST && next != ENDOFLIST && (res = memcmp(head, next, bytesToCompare)) <= 0) {
+    if (next == ENDOFLIST) {
+        // List size == 1; the full list is the prefix.
+        return {.prefix = head, .suffix = ENDOFLIST};
+    } else {
+        // List size >= 2; find out whether the prefix is increasing or decreasing.
+        int res = memcmp(head, next, bytesToCompare);
         comparisonCount += 1;
         if (res == 0) {
-            // We share duplicates to ensure that the list does not contain duplicates.
+            // first element == second element, share them and retry.
             PolyObject *nextnext = next->GetForwardingPtr();
             movementCount += 1;
             shareWith(next, head);
             shareCount += 1;
-            next = nextnext;
-            head->SetForwardingPtr(next);
+            head->SetForwardingPtr(nextnext);
+            return splitNaturalPrefix(head, lengthWord, bytesToCompare, movementCount, comparisonCount, shareCount);
+        } else if (res < 0) {
+            // first element < second element; find the longest prefix in increasing order.
+
+            PolyObject *current = head;
+            do {
+                comparisonCount += 1;
+                if (res == 0) {
+                    // We share duplicates to ensure that the list does not contain duplicates.
+                    PolyObject *nextnext = next->GetForwardingPtr();
+                    movementCount += 1;
+                    shareWith(next, current);
+                    shareCount += 1;
+                    next = nextnext;
+                    current->SetForwardingPtr(nextnext);
+                } else {
+                    current = next;
+                    next = current->GetForwardingPtr();
+                    movementCount += 1;
+                }
+            } while (current != ENDOFLIST && next != ENDOFLIST && (res = memcmp(current, next, bytesToCompare)) <= 0);
+
+            // End the prefix list.
+            current->SetForwardingPtr(ENDOFLIST);
+            return {.prefix = head, .suffix = next};
         } else {
-            head = next;
-            next = head->GetForwardingPtr();
-            movementCount += 1;
+            // first element > second element; find the longest prefix in decreasing order.
+            // head->SetForwardingPtr(ENDOFLIST);
+            // return {.prefix = head, .suffix = next};
+
+            PolyObject *prefix = head;
+            prefix->SetForwardingPtr(ENDOFLIST);
+
+            do {
+                comparisonCount += 1;
+                if (res == 0) {
+                    // We share duplicates to ensure that the list does not contain duplicates.
+                    PolyObject *nextnext = next->GetForwardingPtr();
+                    movementCount += 1;
+                    shareWith(next, prefix);
+                    shareCount += 1;
+                    next = nextnext;
+                } else {
+                    PolyObject *nextnext = next->GetForwardingPtr();
+                    next->SetForwardingPtr(prefix);
+                    prefix = next;
+                    next = nextnext;
+                    movementCount += 1;
+                }
+            } while (prefix != ENDOFLIST && next != ENDOFLIST && (res = memcmp(prefix, next, bytesToCompare)) <= 0);
+
+            return {.prefix = prefix, .suffix = next};
         }
     }
-
-    // while (head != ENDOFLIST && next != ENDOFLIST && memcmp(head, next, bytesToCompare) < 0) {
-    //     comparisonCount += 1;
-    //     head = next;
-    //     next = head->GetForwardingPtr();
-    //     movementCount += 1;
-    // }
-    head->SetForwardingPtr(ENDOFLIST);
-    // Set the new head for the next iteration.
-    return next;
 }
 
 // Mergesort the list to detect cells with the same content.
@@ -797,10 +843,11 @@ void SortVector::sortList(
     array.fill(ENDOFLIST);
 
     while (head != ENDOFLIST) {
-        // Find the longest possible ordered prefix
-        PolyObject *orderedList = head;
+        // Find the longest possible natural "prefix" in increasing order and without duplicates.
+        auto splitResult = splitNaturalPrefix(head, lengthWord, bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
+        PolyObject *orderedList = splitResult.prefix;
         // Set the new head for the next iteration.
-        head = splitNaturalPrefix(head, lengthWord, bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
+        head = splitResult.suffix;
 
         // Merge the ordered prefix with the already sorted lists.
         std::size_t i = 0;
@@ -816,7 +863,6 @@ void SortVector::sortList(
         } else [[unlikely]] {
             array.back() = orderedList;
         }
-
     }
 
     // Merge the array into a single list to remove duplicates between lists.
