@@ -881,29 +881,6 @@ void SortVector::sortList(
     // However, instead of merging the list, set the length word on the nonforwarding objects.
     shareDuplicatesAndSetLengthWord(result, array[lastList], lengthWord, bytesToCompare, localMovementCount, localComparisonCount, localShareCount);
 
-    // while (result != ENDOFLIST) {
-    //     localMovementCount += 1;
-    //     PolyObject *next = result->GetForwardingPtr();
-
-    //     // TODO2: Remove this code, which will become redundant, once TODO1 is solved.
-    //     // Skip and share the following consecutive equal elements
-    //     // localComparisonCount += 1; // First comparison in the loop condition
-    //     // while (next != ENDOFLIST && memcmp(result, next, bytesToCompare) == 0) {
-    //     //     localMovementCount += 1;
-    //     //     PolyObject *nextnext = next->GetForwardingPtr();
-
-    //     //     shareWith(next, result);
-    //     //     localShareCount += 1;
-
-    //     //     next = nextnext;
-
-    //     //     localComparisonCount += 1; // Next comparison in the loop condition
-    //     // }
-
-    //     result->SetLengthWord(lengthWord);
-    //     result = next;
-    // }
-
     shareCount += localShareCount;
     movementCount += localMovementCount;
     comparisonCount += localComparisonCount;
