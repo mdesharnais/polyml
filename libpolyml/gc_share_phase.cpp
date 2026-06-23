@@ -815,7 +815,7 @@ splitResult splitNaturalPrefix(
                     next = nextnext;
                     movementCount += 1;
                 }
-            } while (prefix != ENDOFLIST && next != ENDOFLIST && (res = memcmp(prefix, next, bytesToCompare)) <= 0);
+            } while (prefix != ENDOFLIST && next != ENDOFLIST && (res = memcmp(prefix, next, bytesToCompare)) >= 0);
 
             return {.prefix = prefix, .suffix = next};
         }
