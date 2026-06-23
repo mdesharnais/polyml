@@ -618,7 +618,7 @@ PolyObject* mergeLists(
 
     while (left != ENDOFLIST && right != ENDOFLIST) {
         // Front and back are either both set or both unset.
-        //ASSERT((front == ENDOFLIST) == (back == ENDOFLIST));
+        ASSERT((front == ENDOFLIST) == (back == ENDOFLIST));
 
         comparisonCount += 1;
         int res = memcmp(left, right, bytesToCompare);
@@ -664,7 +664,7 @@ PolyObject* mergeLists(
     }
 
     // Either left is empty, or right is empty, or both are empty.
-    //ASSERT(left == ENDOFLIST || right == ENDOFLIST);
+    ASSERT(left == ENDOFLIST || right == ENDOFLIST);
     PolyObject *remaining = ENDOFLIST;
     if (left != ENDOFLIST) {
         remaining = left;
@@ -673,7 +673,7 @@ PolyObject* mergeLists(
     }
 
     // The remaining elements are greater than the accumulated elements;
-    //ASSERT(back == ENDOFLIST || remaining == ENDOFLIST || memcmp(back, remaining, bytesToCompare) <= 0);
+    ASSERT(back == ENDOFLIST || remaining == ENDOFLIST || memcmp(back, remaining, bytesToCompare) <= 0);
 
     // we can append the remaining elements at the back of the accumulator.
     // However, the accumulator could be empty.
@@ -768,7 +768,7 @@ splitResult splitNaturalPrefix(
             shareWith(next, head);
             shareCount += 1;
             head->SetForwardingPtr(nextnext);
-            return splitNaturalPrefix(head, lengthWord, bytesToCompare, movementCount, comparisonCount, shareCount);
+            [[gnu::musttail]] return splitNaturalPrefix(head, lengthWord, bytesToCompare, movementCount, comparisonCount, shareCount);
         } else if (res < 0) {
             // first element < second element; find the longest prefix in increasing order.
 
@@ -795,8 +795,6 @@ splitResult splitNaturalPrefix(
             return {.prefix = head, .suffix = next};
         } else {
             // first element > second element; find the longest prefix in decreasing order.
-            // head->SetForwardingPtr(ENDOFLIST);
-            // return {.prefix = head, .suffix = next};
 
             PolyObject *prefix = head;
             prefix->SetForwardingPtr(ENDOFLIST);
