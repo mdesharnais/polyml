@@ -60,6 +60,14 @@
 #include <sys/resource.h>
 #endif
 
+#ifdef HAVE_TIME_H
+#include <time.h>
+#endif
+
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+
 #if (defined(_WIN32))
 #include <tchar.h>
 #else
@@ -94,6 +102,11 @@
 #include "winguiconsole.h"
 
 static const TCHAR *lpszServiceName = 0; // DDE service name
+#endif
+
+// Set from git describe when building from a repository.
+#ifndef GIT_VERSION
+#define GIT_VERSION "unknown"
 #endif
 
 FILE *polyStdout, *polyStderr; // Redirected in the Windows GUI
@@ -164,7 +177,8 @@ static struct __debugOpts {
     { _T("sharing"),            "Information from PolyML.shareCommonData",          DEBUG_SHARING},
     { _T("locks"),              "Information about contended locks",                DEBUG_CONTENTION},
     { _T("rts"),                "General run-time system calls",                    DEBUG_RTSCALLS},
-    { _T("saving"),             "Saving and loading state; exporting",              DEBUG_SAVING }
+    { _T("saving"),             "Saving and loading state; exporting",              DEBUG_SAVING },
+    { _T("polyproc"),           "Log Poly/ML process information",                  DEBUG_POLYPROC }
 };
 
 // Parse a parameter that is meant to be a size.  Returns the value as a number
@@ -369,6 +383,28 @@ int polymain(int argc, TCHAR **argv, exportDescription *exports)
             importFileName = argv[i];
         else
             userOptions.user_arg_strings[userOptions.user_arg_count++] = argv[i];
+    }
+
+    if (debugOptions & DEBUG_POLYPROC)
+    {
+        char buffer[sizeof("YYYY-MM-DDTHH:MM:SSZ")];
+        time_t now = time(NULL);
+        // Only one thread is running at this point so the non-reentrant
+        // gmtime is safe here.
+        struct tm *utc = gmtime(&now);
+        if (utc == NULL || strftime(buffer, sizeof(buffer), "%FT%TZ", utc) == 0)
+            strcpy(buffer, "unknown");
+
+#if (defined(_WIN32))
+        unsigned long pid = ::GetCurrentProcessId();
+#else
+        unsigned long pid = (unsigned long)getpid();
+#endif
+        Log("POLYPROC: Poly/ML " TextVersion " (" GIT_VERSION ") pid %lu started at %s:",
+            pid, buffer);
+        for (int i = 0; i < argc; i++)
+            Log(" %" TCHARFMT, argv[i]);
+        Log("\n");
     }
 
 #ifdef __HAIKU__
