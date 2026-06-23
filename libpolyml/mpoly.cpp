@@ -70,6 +70,8 @@
 #define _tcschr strchr
 #endif
 
+#include <ctime>
+
 #include "globals.h"
 #include "sys.h"
 #include "gc.h"
@@ -162,7 +164,8 @@ static struct __debugOpts {
     { _T("sharing"),            "Information from PolyML.shareCommonData",          DEBUG_SHARING},
     { _T("locks"),              "Information about contended locks",                DEBUG_CONTENTION},
     { _T("rts"),                "General run-time system calls",                    DEBUG_RTSCALLS},
-    { _T("saving"),             "Saving and loading state; exporting",              DEBUG_SAVING }
+    { _T("saving"),             "Saving and loading state; exporting",              DEBUG_SAVING },
+    { _T("polyml"),             "Log Poly/ML process information",                  DEBUG_POLYML }
 };
 
 // Parse a parameter that is meant to be a size.  Returns the value as a number
@@ -361,6 +364,20 @@ int polymain(int argc, TCHAR **argv, exportDescription *exports)
             importFileName = argv[i];
         else
             userOptions.user_arg_strings[userOptions.user_arg_count++] = argv[i];
+    }
+
+    if (debugOptions & DEBUG_POLYML)
+    {
+        char buffer[sizeof("YYYY-MM-DDTHH:MM:SSZ")];
+        std::time_t time = std::time(nullptr);
+        std::strftime(buffer, sizeof(buffer), "%FT%T", std::gmtime(&time));
+
+        Log("POLYML: started at %s", buffer);
+        for (std::size_t i = 0; i < argc; i += 1)
+        {
+            Log(" %s", argv[i]);
+        }
+        Log("\n");
     }
 
 #ifdef __HAIKU__
