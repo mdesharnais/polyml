@@ -160,12 +160,12 @@ static FILE *logStream = stdout;
 void SetLogFile(const TCHAR *fileName)
 {
 #if (defined(_WIN32) && defined(UNICODE))
-    FILE *stream = _wfopen(fileName, L"w");
+    FILE *stream = _wfopen(fileName, L"a");
     if (stream == NULL)
         fprintf(polyStdout, "Unable to open debug file %S\n", fileName);
     else logStream = stream;
 #else
-    FILE *stream = fopen(fileName, "w");
+    FILE *stream = fopen(fileName, "a");
     if (stream == NULL)
         fprintf(polyStdout, "Unable to open debug file %s\n", fileName);
     else logStream = stream;
