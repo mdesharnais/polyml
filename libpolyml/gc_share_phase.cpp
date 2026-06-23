@@ -1021,7 +1021,6 @@ void SortVector::wordDataTask(GCTaskId*, void *a, void *)
                     // Update the addresses of objects that have been merged
                     h->Set(i, checkStateAndFollowForwardingChain(p));
                     s->carryOver++;
-                    break;
                 }
                 else if (state == CHAINED)
                 {
