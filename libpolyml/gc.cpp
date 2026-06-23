@@ -118,7 +118,7 @@ static bool doGC(const POLYUNSIGNED wordsRequiredToAllocate)
         gMem.ReportHeapSizes("Full GC (before)");
 
     // Data sharing pass.
-    if (true)
+    if (gHeapSizeParameters.PerformSharingPass())
     {
         globalStats.incCount(PSC_GC_SHARING);
         GCSharingPhase();
