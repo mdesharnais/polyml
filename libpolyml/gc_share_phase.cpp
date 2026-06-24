@@ -768,7 +768,7 @@ splitResult splitNaturalPrefix(
             shareWith(next, head);
             shareCount += 1;
             head->SetForwardingPtr(nextnext);
-            return splitNaturalPrefix(head, lengthWord, bytesToCompare, movementCount, comparisonCount, shareCount);
+            [[gnu::musttail]] return splitNaturalPrefix(head, lengthWord, bytesToCompare, movementCount, comparisonCount, shareCount);
         } else if (res < 0) {
             // first element < second element; find the longest prefix in increasing order.
 
