@@ -624,8 +624,8 @@ PolyObject* mergeLists(
         int res = memcmp(left, right, bytesToCompare);
         // TODO1: Figure out why uncommenting this produces a segmentation fault during compilation
         if (res == 0) {
-            movementCount += 1;
             PolyObject *next = left->GetForwardingPtr();
+            movementCount += 1;
 
             // Equal - they can share
             shareWith(left, right);
@@ -633,8 +633,8 @@ PolyObject* mergeLists(
 
             left = next;
         } else if (res >= 0) {
-            movementCount += 1;
             PolyObject *next = right->GetForwardingPtr();
+            movementCount += 1;
 
             right->SetForwardingPtr(ENDOFLIST);
             if (back == ENDOFLIST) [[unlikely]] {
@@ -647,8 +647,8 @@ PolyObject* mergeLists(
             back = right;
             right = next;
         } else {
-            movementCount += 1;
             PolyObject *next = left->GetForwardingPtr();
+            movementCount += 1;
 
             left->SetForwardingPtr(ENDOFLIST);
             if (back == ENDOFLIST) [[unlikely]] {
@@ -698,8 +698,8 @@ void shareDuplicatesAndSetLengthWord(
         comparisonCount += 1;
         int res = memcmp(left, right, bytesToCompare);
         if (res == 0) {
-            movementCount += 1;
             PolyObject *next = left->GetForwardingPtr();
+            movementCount += 1;
 
             // Equal - they can share
             shareWith(left, right);
@@ -707,28 +707,28 @@ void shareDuplicatesAndSetLengthWord(
 
             left = next;
         } else if (res >= 0) {
-            movementCount += 1;
             PolyObject *next = right->GetForwardingPtr();
+            movementCount += 1;
             right->SetLengthWord(lengthWord);
             right = next;
         } else {
-            movementCount += 1;
             PolyObject *next = left->GetForwardingPtr();
+            movementCount += 1;
             left->SetLengthWord(lengthWord);
             left = next;
         }
     }
 
     while (left != ENDOFLIST) {
-        movementCount += 1;
         PolyObject *next = left->GetForwardingPtr();
+        movementCount += 1;
         left->SetLengthWord(lengthWord);
         left = next;
     }
 
     while (right != ENDOFLIST) {
-        movementCount += 1;
         PolyObject *next = right->GetForwardingPtr();
+        movementCount += 1;
         right->SetLengthWord(lengthWord);
         right = next;
     }
@@ -810,10 +810,10 @@ splitResult splitNaturalPrefix(
                     next = nextnext;
                 } else {
                     PolyObject *nextnext = next->GetForwardingPtr();
+                    movementCount += 1;
                     next->SetForwardingPtr(prefix);
                     prefix = next;
                     next = nextnext;
-                    movementCount += 1;
                 }
             } while (prefix != ENDOFLIST && next != ENDOFLIST && (res = memcmp(prefix, next, bytesToCompare)) >= 0);
 
