@@ -795,8 +795,6 @@ splitResult splitNaturalPrefix(
             return {.prefix = head, .suffix = next};
         } else {
             // first element > second element; find the longest prefix in decreasing order.
-            // head->SetForwardingPtr(ENDOFLIST);
-            // return {.prefix = head, .suffix = next};
 
             PolyObject *prefix = head;
             prefix->SetForwardingPtr(ENDOFLIST);
