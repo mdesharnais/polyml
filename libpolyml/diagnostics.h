@@ -43,7 +43,7 @@ NORETURNFN(extern void Crash(const char *, ...));
 
 NORETURNFN(extern void ExitWithError(const char *, int err));
 
-extern void SetLogFile(const TCHAR *fileName);
+extern void SetLogFile(const TCHAR *fileName, bool append);
 extern void Log(const char *, ...);
 extern void LogSize(uintptr_t wordSize);
 

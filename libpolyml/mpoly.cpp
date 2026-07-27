@@ -128,6 +128,7 @@ enum {
     OPT_GCTHREADS,
     OPT_DEBUGOPTS,
     OPT_DEBUGFILE,
+    OPT_LOGAPPEND,
     OPT_DDESERVICE,
     OPT_CODEPAGE,
     OPT_REMOTESTATS,
@@ -148,6 +149,7 @@ static struct __argtab {
     { _T("--gcthreads"),    "Number of threads to use for garbage collection",      OPT_GCTHREADS },
     { _T("--debug"),        "Debug options: checkmem, gc, x",                       OPT_DEBUGOPTS },
     { _T("--logfile"),      "Logging file (default is to log to stdout)",           OPT_DEBUGFILE },
+    { _T("--logappend"),    "Append to the logging file rather than truncating it", OPT_LOGAPPEND },
     { _T("--enablegcsharing"), "Allow the garbage collector to run the sharing pass if needed",  OPT_GCSHARING },
 #if (defined(_WIN32))
 #ifdef UNICODE
@@ -256,6 +258,8 @@ int polymain(int argc, TCHAR **argv, exportDescription *exports)
         userOptions.programName = _T(""); // Set it to a valid empty string
     
     TCHAR *importFileName = 0;
+    const TCHAR *logFileName = 0;
+    bool logAppend = false;
     debugOptions       = 0;
 
     userOptions.user_arg_count   = 0;
@@ -275,7 +279,11 @@ int polymain(int argc, TCHAR **argv, exportDescription *exports)
                 {
                     const TCHAR *p = 0;
                     TCHAR *endp = 0;
-                    if (argTable[j].argKey != OPT_REMOTESTATS && argTable[j].argKey != OPT_GCSHARING)
+                    bool optionTakesValue =
+                        argTable[j].argKey != OPT_REMOTESTATS &&
+                        argTable[j].argKey != OPT_GCSHARING &&
+                        argTable[j].argKey != OPT_LOGAPPEND;
+                    if (optionTakesValue)
                     {
                         if (_tcslen(argv[i]) == argl)
                         { // If it has used all the argument pick the next
@@ -347,7 +355,11 @@ int polymain(int argc, TCHAR **argv, exportDescription *exports)
                         if (debugOptions & DEBUG_GC_ENHANCED) debugOptions |= DEBUG_GC;
                         break;
                     case OPT_DEBUGFILE:
-                        SetLogFile(p);
+                        logFileName = p;
+                        break;
+
+                    case OPT_LOGAPPEND:
+                        logAppend = true;
                         break;
 #if (defined(_WIN32))
                     case OPT_DDESERVICE:
@@ -384,6 +396,9 @@ int polymain(int argc, TCHAR **argv, exportDescription *exports)
         else
             userOptions.user_arg_strings[userOptions.user_arg_count++] = argv[i];
     }
+
+    if (logFileName != 0)
+        SetLogFile(logFileName, logAppend);
 
     if (debugOptions & DEBUG_POLYPROC)
     {
